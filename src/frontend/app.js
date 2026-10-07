@@ -13,6 +13,7 @@ let prefs = { workspace: '', ignored: [] };
 let projects = [];
 let language = 'en';
 let activeFilter = 'all';
+const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
   en: {
@@ -29,6 +30,8 @@ const I18N = {
     noTrackingReason: 'branch not tracking a remote', tooRecentReason: 'newer than 180 days',
     today: 'today', yesterday: 'yesterday', days: '{n} days', months: '{n} months', noCommits: 'no commits',
     changeLanguage: 'Change language',
+    chooseColor: 'Choose card color', removeColor: 'No color',
+    blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
   },
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
@@ -44,6 +47,8 @@ const I18N = {
     noTrackingReason: 'il branch non segue un remote', tooRecentReason: 'più recente di 180 giorni',
     today: 'oggi', yesterday: 'ieri', days: '{n} giorni', months: '{n} mesi', noCommits: 'nessun commit',
     changeLanguage: 'Cambia lingua',
+    chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
+    blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
   },
 };
 
@@ -68,8 +73,29 @@ function formatReasons(p) {
   }).filter(Boolean).join(', ');
 }
 
+function projectColor(path) {
+  const color = prefs.projectColors && prefs.projectColors[path];
+  return COLOR_OPTIONS.includes(color) ? color : '';
+}
+
+function colorPicker(p) {
+  const selected = projectColor(p.path);
+  const swatches = [null, ...COLOR_OPTIONS].map((color) => {
+    const label = color ? t(color) : t('removeColor');
+    const active = (color || '') === selected;
+    return `<button class="color-swatch ${color || 'none'} ${active ? 'selected' : ''}"
+      data-color="${color || ''}" data-color-path="${esc(p.path)}"
+      aria-label="${esc(label)}" aria-pressed="${active}" title="${esc(label)}"></button>`;
+  }).join('');
+  return `<details class="color-picker">
+    <summary class="color-trigger ${selected || 'none'}" aria-label="${esc(t('chooseColor'))}" title="${esc(t('chooseColor'))}"></summary>
+    <div class="color-palette">${swatches}</div>
+  </details>`;
+}
+
 function card(p) {
   const tags = [];
+  const color = projectColor(p.path);
   if (p.dirty) tags.push(`<span class="tag dirty">● ${p.dirtyFiles} ${esc(t('modified'))}</span>`);
   if (!p.remote) tags.push(`<span class="tag noremote">⚠ ${esc(t('noRemote'))}</span>`);
   if (p.unpushed) tags.push(`<span class="tag unpushed">↑ ${p.unpushed} ${esc(t('unpushed'))}</span>`);
@@ -79,8 +105,8 @@ function card(p) {
     ? `<div class="safety safe">✅ ${esc(t('safeToRemove'))}</div>`
     : `<div class="safety keep">⚠ ${esc(t('doNotDelete'))} — ${esc(formatReasons(p))}</div>`;
 
-  return `<div class="card">
-    <h3>${esc(p.name)}</h3>
+  return `<div class="card${color ? ` project-color-${color}` : ''}">
+    <div class="card-head"><h3>${esc(p.name)}</h3>${colorPicker(p)}</div>
     <div class="meta">${esc(p.stack)} • ${esc(p.remote ? t('remote') : t('localOnly'))} • ${esc(p.branch)}</div>
     <div class="tags">${tags.join('')}</div>
     <div class="row"><span>${esc(t('lastActivity'))}</span><b>${fmtAge(p.lastCommitDays)}</b></div>
@@ -174,6 +200,19 @@ $('filters').addEventListener('click', (ev) => {
   activeFilter = btn.dataset.filter;
   render();
 });
+$('board').addEventListener('click', async (ev) => {
+  const swatch = ev.target.closest('[data-color-path]');
+  if (!swatch) return;
+  ev.stopPropagation();
+  const path = swatch.dataset.colorPath;
+  const color = swatch.dataset.color;
+  const projectColors = { ...(prefs.projectColors || {}) };
+  if (COLOR_OPTIONS.includes(color)) projectColors[path] = color;
+  else delete projectColors[path];
+  prefs.projectColors = projectColors;
+  await tiny.api.call('savePrefs', { projectColors });
+  render();
+});
 $('language').addEventListener('click', async () => {
   language = language === 'it' ? 'en' : 'it';
   prefs.language = language;
@@ -210,6 +249,7 @@ $('board').addEventListener('click', async (ev) => {
 
 (async function init() {
   prefs = await tiny.api.call('loadPrefs');
+  prefs.projectColors = prefs.projectColors || {};
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();
   $('ws').textContent = prefs.workspace;

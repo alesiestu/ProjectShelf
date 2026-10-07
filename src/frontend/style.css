@@ -76,7 +76,38 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   padding: 10px; margin-bottom: 8px;
 }
-.card h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.color-picker { position: relative; flex: 0 0 auto; }
+.color-picker summary { list-style: none; }
+.color-picker summary::-webkit-details-marker { display: none; }
+.color-trigger {
+  display: block; width: 16px; height: 16px; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--line); background: transparent;
+}
+.color-trigger.none { background: repeating-linear-gradient(135deg, transparent 0 4px, var(--dim) 4px 5px); }
+.color-trigger.blue, .color-swatch.blue { background: #58a6ff; }
+.color-trigger.green, .color-swatch.green { background: #3fb950; }
+.color-trigger.yellow, .color-swatch.yellow { background: #d29922; }
+.color-trigger.orange, .color-swatch.orange { background: #db6d28; }
+.color-trigger.red, .color-swatch.red { background: #f85149; }
+.color-trigger.purple, .color-swatch.purple { background: #bc8cff; }
+.color-palette {
+  position: absolute; right: 0; top: 23px; z-index: 4; display: flex; gap: 5px;
+  padding: 7px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.22);
+}
+.color-swatch {
+  width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 2px solid transparent;
+}
+.color-swatch.none { background: repeating-linear-gradient(135deg, var(--panel) 0 4px, var(--dim) 4px 5px); }
+.color-swatch:hover, .color-swatch:focus-visible, .color-swatch.selected { border-color: var(--fg); outline: none; }
+.card.project-color-blue { border-left: 4px solid #58a6ff; background: rgba(88,166,255,.08); }
+.card.project-color-green { border-left: 4px solid #3fb950; background: rgba(63,185,80,.08); }
+.card.project-color-yellow { border-left: 4px solid #d29922; background: rgba(210,153,34,.08); }
+.card.project-color-orange { border-left: 4px solid #db6d28; background: rgba(219,109,40,.08); }
+.card.project-color-red { border-left: 4px solid #f85149; background: rgba(248,81,73,.08); }
+.card.project-color-purple { border-left: 4px solid #bc8cff; background: rgba(188,140,255,.08); }
 .meta { color: var(--dim); font-size: 11px; margin-bottom: 8px; }
 .row { display: flex; justify-content: space-between; font-size: 12px; padding: 1px 0; }
 .row span { color: var(--dim); }
