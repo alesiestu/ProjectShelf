@@ -77,7 +77,16 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   padding: 10px; margin-bottom: 8px;
 }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-tools { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 .card h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rating { display: flex; align-items: center; gap: 0; }
+.star {
+  padding: 0 1px; border: 0; background: transparent; color: var(--line);
+  font-size: 15px; line-height: 16px; cursor: pointer;
+}
+.star.active { color: #d29922; }
+.star:hover, .star:focus-visible { color: #f0b429; outline: none; }
+.star:focus-visible { text-shadow: 0 0 0 2px var(--accent); border-radius: 3px; }
 .color-picker { position: relative; flex: 0 0 auto; }
 .color-picker summary { list-style: none; }
 .color-picker summary::-webkit-details-marker { display: none; }

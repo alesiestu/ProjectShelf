@@ -14,6 +14,7 @@ let projects = [];
 let language = 'en';
 let activeFilter = 'all';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
+const RATING_FILTERS = [5, 4, 3, 1];
 
 const I18N = {
   en: {
@@ -32,6 +33,7 @@ const I18N = {
     changeLanguage: 'Change language',
     chooseColor: 'Choose card color', removeColor: 'No color',
     blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
+    priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating',
   },
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
@@ -49,6 +51,7 @@ const I18N = {
     changeLanguage: 'Cambia lingua',
     chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
     blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
+    priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione',
   },
 };
 
@@ -76,6 +79,23 @@ function formatReasons(p) {
 function projectColor(path) {
   const color = prefs.projectColors && prefs.projectColors[path];
   return COLOR_OPTIONS.includes(color) ? color : '';
+}
+
+function projectRating(path) {
+  const rating = prefs.projectRatings && prefs.projectRatings[path];
+  return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+}
+
+function ratingControl(p) {
+  const rating = projectRating(p.path);
+  return `<div class="rating" aria-label="${esc(t('priority'))}: ${rating ? esc(t('stars', { n: rating })) : '0'}">
+    ${[1, 2, 3, 4, 5].map((value) => {
+      const active = value <= rating;
+      const label = active && value === rating ? t('clearRating') : t('ratingAction', { n: value });
+      return `<button class="star ${active ? 'active' : ''}" data-rating="${value}" data-rating-path="${esc(p.path)}"
+        aria-label="${esc(label)}" aria-pressed="${active}">★</button>`;
+    }).join('')}
+  </div>`;
 }
 
 function colorPicker(p) {
@@ -106,7 +126,7 @@ function card(p) {
     : `<div class="safety keep">⚠ ${esc(t('doNotDelete'))} — ${esc(formatReasons(p))}</div>`;
 
   return `<div class="card${color ? ` project-color-${color}` : ''}">
-    <div class="card-head"><h3>${esc(p.name)}</h3>${colorPicker(p)}</div>
+    <div class="card-head"><h3>${esc(p.name)}</h3><div class="card-tools">${ratingControl(p)}${colorPicker(p)}</div></div>
     <div class="meta">${esc(p.stack)} • ${esc(p.remote ? t('remote') : t('localOnly'))} • ${esc(p.branch)}</div>
     <div class="tags">${tags.join('')}</div>
     <div class="row"><span>${esc(t('lastActivity'))}</span><b>${fmtAge(p.lastCommitDays)}</b></div>
@@ -138,6 +158,11 @@ function render() {
     ['dirty', t('dirty'), projects.filter((p) => p.dirty).length],
     ['noRemote', t('noRemote'), projects.filter((p) => !p.remote).length],
     ['reclaimable', t('reclaimable'), projects.filter((p) => p.safeToRemove).length],
+    ...RATING_FILTERS.map((threshold) => [
+      `rating-${threshold}`,
+      threshold === 5 ? t('stars', { n: threshold }) : t('atLeastStars', { n: threshold }),
+      projects.filter((p) => projectRating(p.path) >= threshold).length,
+    ]),
   ];
   $('filters').innerHTML = `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
     `<button class="filter ${activeFilter === key ? 'active' : ''}" data-filter="${key}">${esc(label)} <b>${count}</b></button>`,
@@ -147,12 +172,14 @@ function render() {
     if (activeFilter === 'dirty') return p.dirty;
     if (activeFilter === 'noRemote') return !p.remote;
     if (activeFilter === 'reclaimable') return p.safeToRemove;
+    if (activeFilter.startsWith('rating-')) return projectRating(p.path) >= Number(activeFilter.slice(7));
     return true;
   });
 
   $('board').innerHTML = COLS.map(([key, label, hint]) => {
     const list = visibleProjects.filter((p) => p.status === key)
-      .sort((a, b) => (a.lastCommitDays ?? 1e9) - (b.lastCommitDays ?? 1e9));
+      .sort((a, b) => projectRating(b.path) - projectRating(a.path)
+        || (a.lastCommitDays ?? 1e9) - (b.lastCommitDays ?? 1e9));
     return `<div class="col ${key}">
       <h2><i></i>${esc(t(label))} <em>${esc(hint)} · ${list.length}</em></h2>
       ${list.length ? list.map(card).join('') : `<div class="empty">${esc(t('nothingHere'))}</div>`}
@@ -233,6 +260,20 @@ function applyLanguage() {
 }
 
 $('board').addEventListener('click', async (ev) => {
+  const ratingButton = ev.target.closest('[data-rating-path]');
+  if (ratingButton) {
+    ev.stopPropagation();
+    const path = ratingButton.dataset.ratingPath;
+    const value = Number(ratingButton.dataset.rating);
+    const current = projectRating(path);
+    const projectRatings = { ...(prefs.projectRatings || {}) };
+    if (value === current) delete projectRatings[path];
+    else if (Number.isInteger(value) && value >= 1 && value <= 5) projectRatings[path] = value;
+    prefs.projectRatings = projectRatings;
+    await tiny.api.call('savePrefs', { projectRatings });
+    render();
+    return;
+  }
   const btn = ev.target.closest('.acts button');
   if (!btn) return;
   const path = btn.parentElement.dataset.path;
@@ -250,6 +291,7 @@ $('board').addEventListener('click', async (ev) => {
 (async function init() {
   prefs = await tiny.api.call('loadPrefs');
   prefs.projectColors = prefs.projectColors || {};
+  prefs.projectRatings = prefs.projectRatings || {};
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();
   $('ws').textContent = prefs.workspace;

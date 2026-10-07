@@ -4,6 +4,7 @@
 const dec = new TextDecoder();
 const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
+const MAX_PROJECT_RATING = 5;
 
 // txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
 // older read(buf) and wait() result shapes as fallbacks for dev runtimes.
@@ -177,10 +178,11 @@ export const api = {
       ignored: (await app.store.get('ignored')) || ['node_modules', '.cache', 'vendor', 'dist', 'build'],
       language: (await app.store.get('language')) || null,
       projectColors: (await app.store.get('projectColors')) || {},
+      projectRatings: (await app.store.get('projectRatings')) || {},
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -190,6 +192,15 @@ export const api = {
         if (typeof path === 'string' && PROJECT_COLORS.has(color)) cleanColors[path] = color;
       }
       await app.store.set('projectColors', cleanColors);
+    }
+    if (projectRatings && typeof projectRatings === 'object') {
+      const cleanRatings = {};
+      for (const [path, rating] of Object.entries(projectRatings)) {
+        if (typeof path === 'string' && Number.isInteger(rating) && rating >= 1 && rating <= MAX_PROJECT_RATING) {
+          cleanRatings[path] = rating;
+        }
+      }
+      await app.store.set('projectRatings', cleanRatings);
     }
     return true;
   },
