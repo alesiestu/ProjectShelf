@@ -1,0 +1,13 @@
+{
+  "name": "projectshelf",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "mcp": "node mcp/server.mjs",
+    "test:mcp": "node --test mcp/test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "3.25.76"
+  }
+}

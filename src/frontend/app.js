@@ -20,6 +20,7 @@ let todoOpen = true;
 let todoEditingId = '';
 let gitPath = '';
 let activeTag = '';
+let mcpState = { state: 'stopped', endpoint: '', token: '' };
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
@@ -49,6 +50,7 @@ const I18N = {
     priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating', ratingFilter: 'Show projects with at least {n} stars',
     gitStatus: 'Git status', branch: 'Branch', latestCommit: 'Latest commit', noCommit: 'No commits', openTerminal: 'Open Terminal', close: 'Close', diff: 'Diff', noDiff: 'No diff available', loading: 'Loading…', gitError: 'Unable to read Git status',
     statusModified: 'modified', statusAdded: 'added', statusDeleted: 'deleted', statusRenamed: 'renamed', statusUntracked: 'untracked',
+    mcp: 'MCP', mcpTitle: 'Local MCP', mcpDescription: 'Connect Codex to ProjectShelf locally. Only project metadata and Todo items are available.', mcpEndpoint: 'Endpoint', mcpToken: 'Token', mcpConfig: 'Codex configuration', mcpPrompt: 'Installation prompt', mcpStart: 'Start', mcpStop: 'Stop', mcpRetry: 'Retry', mcpShow: 'Show', mcpHide: 'Hide', mcpRotate: 'Regenerate token', mcpCopyConfig: 'Copy configuration', mcpCopyPrompt: 'Copy prompt', mcpRunning: 'Running', mcpStopped: 'Stopped', mcpError: 'Error', mcpCopied: 'Copied',
   },
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
@@ -76,6 +78,7 @@ const I18N = {
     priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione', ratingFilter: 'Mostra progetti con almeno {n} stelle',
     gitStatus: 'Stato Git', branch: 'Branch', latestCommit: 'Ultimo commit', noCommit: 'Nessun commit', openTerminal: 'Apri Terminale', close: 'Chiudi', diff: 'Diff', noDiff: 'Nessun diff disponibile', loading: 'Caricamento…', gitError: 'Impossibile leggere lo stato Git',
     statusModified: 'modificato', statusAdded: 'aggiunto', statusDeleted: 'eliminato', statusRenamed: 'rinominato', statusUntracked: 'non tracciato',
+    mcp: 'MCP', mcpTitle: 'MCP locale', mcpDescription: 'Collega Codex a ProjectShelf in locale. Sono disponibili solo metadati dei progetti e Todo.', mcpEndpoint: 'Endpoint', mcpToken: 'Token', mcpConfig: 'Configurazione Codex', mcpPrompt: 'Prompt di installazione', mcpStart: 'Avvia', mcpStop: 'Ferma', mcpRetry: 'Riprova', mcpShow: 'Mostra', mcpHide: 'Nascondi', mcpRotate: 'Rigenera token', mcpCopyConfig: 'Copia configurazione', mcpCopyPrompt: 'Copia prompt', mcpRunning: 'Attivo', mcpStopped: 'Fermo', mcpError: 'Errore', mcpCopied: 'Copiato',
   },
 };
 
@@ -383,8 +386,60 @@ async function pick() {
   await scan();
 }
 
+function mcpStatusText(state) {
+  if (state === 'running') return t('mcpRunning');
+  if (state === 'error') return t('mcpError');
+  return t('mcpStopped');
+}
+
+async function refreshMcpDialog() {
+  const info = await tiny.api.call('mcpConfig');
+  mcpState = info;
+  $('mcpStatus').textContent = `${mcpStatusText(info.state)}${info.error ? ': ' + info.error : ''}`;
+  $('mcpStatus').className = `mcp-status ${info.state}`;
+  $('mcpEndpoint').value = info.url || '';
+  $('mcpToken').value = info.token || '';
+  $('mcpConfig').value = info.config || '';
+  $('mcpPrompt').value = info.prompt || '';
+  $('mcpStart').textContent = info.state === 'error' ? t('mcpRetry') : t('mcpStart');
+  $('mcpStop').disabled = info.state !== 'running';
+  $('mcpRotate').disabled = info.state !== 'running';
+}
+
+async function copyMcpField(id, buttonId) {
+  tiny.clipboard.write({ text: $(id).value });
+  const button = $(buttonId);
+  const old = button.textContent;
+  button.textContent = t('mcpCopied');
+  setTimeout(() => { button.textContent = old; }, 1000);
+}
+
 $('pick').addEventListener('click', pick);
 $('rescan').addEventListener('click', scan);
+$('mcpOpen').addEventListener('click', async () => {
+  $('mcpDialog').showModal();
+  await refreshMcpDialog();
+});
+$('mcpClose').addEventListener('click', () => $('mcpDialog').close());
+$('mcpStart').addEventListener('click', async () => {
+  await tiny.api.call('mcpStart');
+  await refreshMcpDialog();
+});
+$('mcpStop').addEventListener('click', async () => {
+  await tiny.api.call('mcpStop');
+  await refreshMcpDialog();
+});
+$('mcpRotate').addEventListener('click', async () => {
+  await tiny.api.call('mcpRotateToken');
+  await refreshMcpDialog();
+});
+$('mcpReveal').addEventListener('click', () => {
+  const input = $('mcpToken');
+  input.type = input.type === 'password' ? 'text' : 'password';
+  $('mcpReveal').textContent = input.type === 'password' ? t('mcpShow') : t('mcpHide');
+});
+$('mcpCopyConfig').addEventListener('click', () => copyMcpField('mcpConfig', 'mcpCopyConfig'));
+$('mcpCopyPrompt').addEventListener('click', () => copyMcpField('mcpPrompt', 'mcpCopyPrompt'));
 $('filters').addEventListener('click', (ev) => {
   const btn = ev.target.closest('[data-filter]');
   if (!btn) return;
@@ -489,6 +544,18 @@ function applyLanguage() {
   $('language').setAttribute('aria-label', t('changeLanguage'));
   $('pick').textContent = t('chooseWorkspace');
   $('rescan').textContent = t('rescan');
+  $('mcpOpen').textContent = t('mcp');
+  $('mcpTitle').textContent = t('mcpTitle');
+  $('mcpDescription').textContent = t('mcpDescription');
+  $('mcpEndpointLabel').textContent = t('mcpEndpoint');
+  $('mcpTokenLabel').textContent = t('mcpToken');
+  $('mcpConfigLabel').textContent = t('mcpConfig');
+  $('mcpPromptLabel').textContent = t('mcpPrompt');
+  $('mcpReveal').textContent = t('mcpShow');
+  $('mcpRotate').textContent = t('mcpRotate');
+  $('mcpCopyConfig').textContent = t('mcpCopyConfig');
+  $('mcpCopyPrompt').textContent = t('mcpCopyPrompt');
+  $('mcpStop').textContent = t('mcpStop');
   $('notionLabel').textContent = t(knowledgeProvider === 'obsidian' ? 'obsidianLabel' : 'notionLabel');
   $('notionUrl').placeholder = t(knowledgeProvider === 'obsidian' ? 'obsidianPlaceholder' : 'notionPlaceholder');
   $('notionCancel').textContent = t('cancel');

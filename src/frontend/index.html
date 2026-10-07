@@ -12,6 +12,7 @@
   <div class="ws" id="ws">—</div>
   <div class="spacer"></div>
   <button id="language" class="language" aria-label="Change language">IT</button>
+  <button id="mcpOpen" class="mcp-button">MCP</button>
   <button id="pick">Choose Workspace…</button>
   <button id="rescan" class="primary">Rescan</button>
 </header>
@@ -78,6 +79,31 @@
     </details>
     <button type="button" id="gitTerminal" class="primary">Open Terminal</button>
   </div>
+</dialog>
+
+<dialog id="mcpDialog" class="notion-dialog mcp-dialog">
+  <form method="dialog" id="mcpForm">
+    <div class="git-dialog-head"><h2 id="mcpTitle">MCP locale</h2><button type="button" id="mcpClose">×</button></div>
+    <p id="mcpDescription" class="mcp-description"></p>
+    <div id="mcpStatus" class="mcp-status"></div>
+    <label id="mcpEndpointLabel" for="mcpEndpoint">Endpoint</label>
+    <input id="mcpEndpoint" readonly>
+    <label id="mcpTokenLabel" for="mcpToken">Token</label>
+    <input id="mcpToken" readonly type="password">
+    <div class="dialog-actions mcp-actions">
+      <button type="button" id="mcpReveal">Show</button>
+      <button type="button" id="mcpRotate">Regenerate token</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" id="mcpStart" class="primary">Start</button>
+      <button type="button" id="mcpStop">Stop</button>
+    </div>
+    <label id="mcpConfigLabel" for="mcpConfig">Codex configuration</label>
+    <textarea id="mcpConfig" readonly rows="6"></textarea>
+    <button type="button" id="mcpCopyConfig">Copy configuration</button>
+    <label id="mcpPromptLabel" for="mcpPrompt">Installation prompt</label>
+    <textarea id="mcpPrompt" readonly rows="7"></textarea>
+    <button type="button" id="mcpCopyPrompt">Copy prompt</button>
+  </form>
 </dialog>
 
 <script src="app.js"></script>

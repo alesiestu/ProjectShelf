@@ -5,6 +5,10 @@ const dec = new TextDecoder();
 const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
 const MAX_PROJECT_RATING = 5;
+const MCP_STATE_PATH = tjs.homeDir + '/.projectshelf/mcp-state.json';
+const MCP_SERVER_PATH = tjs.cwd + '/mcp/server.mjs';
+let mcpProcess;
+let mcpInfo = { state: 'stopped', endpoint: '', port: 0, token: '', error: '' };
 
 function linkProtocol(value) {
   try {
@@ -124,6 +128,81 @@ const git = (dir, ...args) => run(['git', '-C', dir, ...args]);
 
 async function exists(path) {
   try { await tjs.stat(path); return true; } catch { return false; }
+}
+
+async function readJsonFile(path, fallback = null) {
+  try { return JSON.parse(dec.decode(await tjs.readFile(path))); } catch { return fallback; }
+}
+
+async function mcpFetch(path, options = {}) {
+  if (!mcpInfo.endpoint || !mcpInfo.token) throw new Error('MCP service is not running.');
+  const base = mcpInfo.endpoint.replace(/\/mcp$/, '');
+  const response = await fetch(base + path, {
+    ...options,
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + mcpInfo.token, ...(options.headers || {}) },
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || 'MCP service request failed.');
+  return body;
+}
+
+async function refreshMcpInfo() {
+  const state = await readJsonFile(MCP_STATE_PATH);
+  if (state?.token && mcpInfo.endpoint) mcpInfo.token = state.token;
+  return mcpInfo;
+}
+
+async function mcpMigration(app) {
+  const prefs = {};
+  for (const key of ['projectColors', 'projectRatings', 'projectKnowledgeLinks', 'projectNotionLinks', 'projectTags', 'todos']) {
+    prefs[key] = await app.store.get(key);
+  }
+  return prefs;
+}
+
+async function syncPrefsToMcp(payload) {
+  if (mcpInfo.state !== 'running') return;
+  try { await mcpFetch('/app/state', { method: 'POST', body: JSON.stringify(payload) }); } catch {}
+}
+
+async function findNode() {
+  const candidates = [
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+    '/Users/alessandro/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
+  ];
+  for (const candidate of candidates) if (await exists(candidate)) return candidate;
+  return '';
+}
+
+async function waitForMcpReady(child) {
+  if (!child.stdout?.getReader) throw new Error('MCP process did not expose a readable output stream.');
+  const reader = child.stdout.getReader();
+  let buffer = '';
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('MCP service startup timed out.')), 8000);
+    const read = async () => {
+      try {
+        const { value, done } = await reader.read();
+        if (done) return reject(new Error('MCP service stopped during startup.'));
+        buffer += dec.decode(value, { stream: true });
+        const line = buffer.split('\n')[0];
+        if (line) {
+          try {
+            const ready = JSON.parse(line);
+            if (ready.ready && ready.port) {
+              clearTimeout(timeout);
+              resolve(ready);
+              return;
+            }
+          } catch {}
+        }
+        await read();
+      } catch (error) { clearTimeout(timeout); reject(error); }
+    };
+    read();
+  });
 }
 
 // Marker files, most specific first — first hit wins.
@@ -299,6 +378,7 @@ export const api = {
     }
     if (Array.isArray(todos)) await app.store.set('todos', cleanTodos(todos));
     if (projectTags && typeof projectTags === 'object') await app.store.set('projectTags', cleanProjectTags(projectTags));
+    await syncPrefsToMcp({ projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags });
     return true;
   },
 
@@ -317,7 +397,84 @@ export const api = {
       }
       app.push('scan-progress', { done: i + 1, total: found.length });
     }
+    if (mcpInfo.state === 'running') {
+      try { await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify(projects) }); } catch {}
+    }
     return { root, projects };
+  },
+
+  async mcpStatus() {
+    await refreshMcpInfo();
+    return mcpInfo;
+  },
+
+  async mcpStart(_params, app) {
+    if (mcpInfo.state === 'running') return mcpInfo;
+    if (!(await exists(MCP_SERVER_PATH))) {
+      mcpInfo = { ...mcpInfo, state: 'error', error: 'MCP server source was not found.' };
+      return mcpInfo;
+    }
+    const node = await findNode();
+    if (!node) {
+      mcpInfo = { ...mcpInfo, state: 'error', error: 'Node.js was not found. Install Node.js or start the server manually with npm run mcp.' };
+      return mcpInfo;
+    }
+    try {
+      const migration = await mcpMigration(app);
+      mcpProcess = tjs.spawn([node, MCP_SERVER_PATH], {
+        cwd: tjs.cwd,
+        stdout: 'pipe',
+        stderr: 'ignore',
+        env: { PROJECTSHELF_PORT: '0', PROJECTSHELF_STATE_PATH: MCP_STATE_PATH, PROJECTSHELF_MIGRATION: JSON.stringify(migration) },
+      });
+      const ready = await waitForMcpReady(mcpProcess);
+      mcpInfo = { state: 'running', endpoint: ready.endpoint, port: ready.port, token: '', error: '' };
+      await refreshMcpInfo();
+      try { await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify([]) }); } catch {}
+      return mcpInfo;
+    } catch (error) {
+      try { mcpProcess?.kill?.(); } catch {}
+      mcpProcess = undefined;
+      mcpInfo = { ...mcpInfo, state: 'error', error: error.message || 'MCP service could not start.' };
+      return mcpInfo;
+    }
+  },
+
+  async mcpStop() {
+    try { mcpProcess?.kill?.(); } catch {}
+    mcpProcess = undefined;
+    mcpInfo = { ...mcpInfo, state: 'stopped', error: '' };
+    return mcpInfo;
+  },
+
+  async mcpRotateToken() {
+    if (mcpInfo.state !== 'running') return mcpInfo;
+    const result = await mcpFetch('/app/rotate-token', { method: 'POST' });
+    mcpInfo.token = result.token;
+    return mcpInfo;
+  },
+
+  async mcpSync(_params, app) {
+    if (mcpInfo.state !== 'running') return false;
+    const result = await mcpFetch('/app/state');
+    const metadata = result.metadata || {};
+    if (metadata.projectColors) await app.store.set('projectColors', metadata.projectColors);
+    if (metadata.projectRatings) await app.store.set('projectRatings', metadata.projectRatings);
+    if (metadata.projectKnowledgeLinks) await app.store.set('projectKnowledgeLinks', metadata.projectKnowledgeLinks);
+    if (metadata.projectTags) await app.store.set('projectTags', metadata.projectTags);
+    if (Array.isArray(metadata.todos)) await app.store.set('todos', cleanTodos(metadata.todos));
+    return true;
+  },
+
+  async mcpConfig() {
+    await refreshMcpInfo();
+    const url = mcpInfo.endpoint || 'http://127.0.0.1:PORT/mcp';
+    return {
+      ...mcpInfo,
+      url,
+      config: JSON.stringify({ mcp_servers: { projectShelf: { url, headers: { Authorization: `Bearer ${mcpInfo.token || 'TOKEN'}` } } } }, null, 2),
+      prompt: `Connect to ProjectShelf at ${url} using Authorization: Bearer ${mcpInfo.token || 'TOKEN'}. Use list_projects before update_project. You may change only project colors, ratings, tags, Notion links, Obsidian links, and Todo items. Never edit files, run shell commands, perform Git operations, or delete repositories.`,
+    };
   },
 
   async openIn({ path, kind }) {
