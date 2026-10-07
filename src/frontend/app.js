@@ -16,7 +16,6 @@ let activeFilter = 'all';
 let knowledgePath = '';
 let knowledgeProvider = 'notion';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
-const RATING_FILTERS = [5, 4, 3, 1];
 
 const I18N = {
   en: {
@@ -39,7 +38,7 @@ const I18N = {
     save: 'Save', cancel: 'Cancel', remove: 'Remove', invalidNotionUrl: 'Enter a valid http:// or https:// URL.', invalidObsidianUrl: 'Enter a valid obsidian:// URI.',
     chooseColor: 'Choose card color', removeColor: 'No color',
     blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
-    priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating',
+    priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating', ratingFilter: 'Show projects with at least {n} stars',
   },
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
@@ -61,7 +60,7 @@ const I18N = {
     save: 'Salva', cancel: 'Annulla', remove: 'Rimuovi', invalidNotionUrl: 'Inserisci un URL valido che inizi con http:// o https://.', invalidObsidianUrl: 'Inserisci un URI valido che inizi con obsidian://.',
     chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
     blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
-    priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione',
+    priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione', ratingFilter: 'Mostra progetti con almeno {n} stelle',
   },
 };
 
@@ -193,15 +192,17 @@ function render() {
     ['dirty', t('dirty'), projects.filter((p) => p.dirty).length],
     ['noRemote', t('noRemote'), projects.filter((p) => !p.remote).length],
     ['reclaimable', t('reclaimable'), projects.filter((p) => p.safeToRemove).length],
-    ...RATING_FILTERS.map((threshold) => [
-      `rating-${threshold}`,
-      threshold === 5 ? t('stars', { n: threshold }) : t('atLeastStars', { n: threshold }),
-      projects.filter((p) => projectRating(p.path) >= threshold).length,
-    ]),
   ];
+  const ratingThreshold = activeFilter.startsWith('rating-') ? Number(activeFilter.slice(7)) : 0;
+  const ratingFilter = `<div class="priority-filter" aria-label="${esc(t('priority'))}">
+    <span class="filter-label">${esc(t('priority'))}</span>
+    ${[1, 2, 3, 4, 5].map((value) => `<button class="filter-star ${value <= ratingThreshold ? 'active' : ''}"
+      data-filter="rating-${value}" aria-label="${esc(t('ratingFilter', { n: value }))}"
+      aria-pressed="${value === ratingThreshold}" title="${esc(t('atLeastStars', { n: value }))}">★</button>`).join('')}
+  </div>`;
   $('filters').innerHTML = `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
     `<button class="filter ${activeFilter === key ? 'active' : ''}" data-filter="${key}">${esc(label)} <b>${count}</b></button>`,
-  ).join('');
+  ).join('') + ratingFilter;
 
   const visibleProjects = projects.filter((p) => {
     if (activeFilter === 'dirty') return p.dirty;

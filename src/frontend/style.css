@@ -49,6 +49,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .filter b { color: var(--dim); font-weight: 600; margin-left: 3px; }
 .filter.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .filter.active b { color: rgba(255,255,255,.8); }
+.priority-filter { display: flex; align-items: center; gap: 1px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 999px; }
+.priority-filter .filter-label { margin: 0 4px 0 0; }
+.filter-star {
+  padding: 1px 2px; border: 0; background: transparent; color: var(--line);
+  font-size: 16px; line-height: 16px; cursor: pointer;
+}
+.filter-star.active, .filter-star:hover, .filter-star:focus-visible { color: #d29922; }
+.filter-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 
 .bar { display: none; padding: 10px 16px 0; align-items: center; gap: 8px; }
 .bar.on { display: flex; }
