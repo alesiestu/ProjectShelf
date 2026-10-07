@@ -19,6 +19,7 @@ let todos = [];
 let todoOpen = true;
 let todoEditingId = '';
 let gitPath = '';
+let activeTag = '';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
@@ -27,6 +28,7 @@ const I18N = {
     chooseWorkspace: 'Choose Workspace…', rescan: 'Rescan',
     repos: 'Repos', totalSize: 'Total size', dirty: 'Dirty', noRemote: 'No remote', reclaimable: 'Reclaimable',
     filters: 'Filters', all: 'All',
+    tag: 'Tag', addTag: '+ Tag', tagPlaceholder: 'Add tag…', removeTag: 'Remove tag',
     todo: 'Todo', addTodo: 'Add todo', editTodo: 'Edit todo', task: 'Task', linkedProjects: 'Projects',
     noTodos: 'No todos yet', noProjects: 'No projects found', deleteTodo: 'Delete', todoRequired: 'Enter a task first', openTodos: '{n} open',
     remote: 'remote', localOnly: 'local only', modified: 'modified', unpushed: 'unpushed', clean: 'clean',
@@ -53,6 +55,7 @@ const I18N = {
     chooseWorkspace: 'Scegli workspace…', rescan: 'Scansiona',
     repos: 'Repo', totalSize: 'Dimensione totale', dirty: 'Modificati', noRemote: 'Senza remote', reclaimable: 'Recuperabile',
     filters: 'Filtri', all: 'Tutti',
+    tag: 'Tag', addTag: '+ Tag', tagPlaceholder: 'Aggiungi tag…', removeTag: 'Rimuovi tag',
     todo: 'Todo', addTodo: 'Aggiungi todo', editTodo: 'Modifica todo', task: 'Attività', linkedProjects: 'Progetti',
     noTodos: 'Nessun todo', noProjects: 'Nessun progetto trovato', deleteTodo: 'Elimina', todoRequired: 'Inserisci prima un’attività', openTodos: '{n} aperti',
     remote: 'remote', localOnly: 'solo locale', modified: 'modificati', unpushed: 'non inviati', clean: 'pulito',
@@ -105,6 +108,29 @@ function projectColor(path) {
 function projectRating(path) {
   const rating = prefs.projectRatings && prefs.projectRatings[path];
   return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+}
+
+function projectTags(path) {
+  return Array.isArray(prefs.projectTags && prefs.projectTags[path]) ? prefs.projectTags[path] : [];
+}
+
+async function saveProjectTags(path, tags) {
+  const clean = [];
+  const seen = new Set();
+  for (const value of tags) {
+    const tag = String(value).trim().slice(0, 50);
+    const key = tag.toLocaleLowerCase();
+    if (!tag || seen.has(key)) continue;
+    seen.add(key);
+    clean.push(tag);
+    if (clean.length === 12) break;
+  }
+  const projectTagsMap = { ...(prefs.projectTags || {}) };
+  if (clean.length) projectTagsMap[path] = clean;
+  else delete projectTagsMap[path];
+  prefs.projectTags = projectTagsMap;
+  await tiny.api.call('savePrefs', { projectTags: projectTagsMap });
+  render();
 }
 
 function projectKnowledgeLink(path, provider) {
@@ -161,6 +187,7 @@ function card(p) {
   if (!p.remote) tags.push(`<span class="tag noremote">⚠ ${esc(t('noRemote'))}</span>`);
   if (p.unpushed) tags.push(`<span class="tag unpushed">↑ ${p.unpushed} ${esc(t('unpushed'))}</span>`);
   if (!tags.length) tags.push(`<span class="tag">${esc(t('clean'))}</span>`);
+  const customTags = projectTags(p.path).map((tag) => `<span class="tag project-tag">${esc(tag)}<button data-tag-remove="${esc(tag)}" data-tag-path="${esc(p.path)}" aria-label="${esc(t('removeTag'))}">×</button></span>`);
 
   const safety = p.safeToRemove
     ? `<div class="safety safe">✅ ${esc(t('safeToRemove'))}</div>`
@@ -169,7 +196,7 @@ function card(p) {
   return `<div class="card${color ? ` project-color-${color}` : ''}">
     <div class="card-head"><h3>${esc(p.name)}</h3><div class="card-tools">${ratingControl(p)}${colorPicker(p)}</div></div>
     <div class="meta">${esc(p.stack)} • ${esc(p.remote ? t('remote') : t('localOnly'))} • ${esc(p.branch)}</div>
-    <div class="tags">${tags.join('')}</div>
+    <div class="tags">${tags.join('')}${customTags.join('')}<input class="tag-input" data-tag-path="${esc(p.path)}" maxlength="50" placeholder="${esc(t('tagPlaceholder'))}" aria-label="${esc(t('addTag'))}"></div>
     <div class="row"><span>${esc(t('lastActivity'))}</span><b>${fmtAge(p.lastCommitDays)}</b></div>
     <div class="row"><span>${esc(t('size'))}</span><b>${fmtSize(p.sizeMB)}</b></div>
     ${safety}
@@ -289,9 +316,19 @@ function render() {
       data-filter="rating-${value}" aria-label="${esc(t('ratingFilter', { n: value }))}"
       aria-pressed="${value === ratingThreshold}" title="${esc(t('atLeastStars', { n: value }))}">★</button>`).join('')}
   </div>`;
+  const tagMap = new Map();
+  projects.forEach((project) => projectTags(project.path).forEach((tag) => {
+    const key = tag.toLocaleLowerCase();
+    if (!tagMap.has(key)) tagMap.set(key, tag);
+  }));
+  const tagFilters = [...tagMap.entries()].map(([key, tag]) => {
+    const filterKey = 'tag:' + key;
+    const count = projects.filter((project) => projectTags(project.path).some((value) => value.toLocaleLowerCase() === key)).length;
+    return `<button class="filter ${activeFilter === filterKey ? 'active' : ''}" data-filter="${esc(filterKey)}">${esc(tag)} <b>${count}</b></button>`;
+  }).join('');
   $('filters').innerHTML = `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
     `<button class="filter ${activeFilter === key ? 'active' : ''}" data-filter="${key}">${esc(label)} <b>${count}</b></button>`,
-  ).join('') + ratingFilter;
+  ).join('') + ratingFilter + (tagFilters ? `<span class="filter-label tag-filter-label">${esc(t('tag'))}</span>${tagFilters}` : '');
   renderTodos();
 
   const visibleProjects = projects.filter((p) => {
@@ -299,6 +336,7 @@ function render() {
     if (activeFilter === 'noRemote') return !p.remote;
     if (activeFilter === 'reclaimable') return p.safeToRemove;
     if (activeFilter.startsWith('rating-')) return projectRating(p.path) >= Number(activeFilter.slice(7));
+    if (activeFilter.startsWith('tag:')) return projectTags(p.path).some((tag) => tag.toLocaleLowerCase() === activeFilter.slice(4));
     return true;
   });
 
@@ -352,6 +390,22 @@ $('filters').addEventListener('click', (ev) => {
   if (!btn) return;
   activeFilter = btn.dataset.filter;
   render();
+});
+$('board').addEventListener('keydown', async (ev) => {
+  const input = ev.target.closest('[data-tag-path]');
+  if (!input || ev.key !== 'Enter') return;
+  ev.preventDefault();
+  const tag = input.value.trim();
+  if (!tag) return;
+  await saveProjectTags(input.dataset.tagPath, [...projectTags(input.dataset.tagPath), tag]);
+});
+$('board').addEventListener('click', async (ev) => {
+  const remove = ev.target.closest('[data-tag-remove]');
+  if (!remove) return;
+  ev.stopPropagation();
+  const path = remove.dataset.tagPath;
+  const target = remove.dataset.tagRemove.toLocaleLowerCase();
+  await saveProjectTags(path, projectTags(path).filter((tag) => tag.toLocaleLowerCase() !== target));
 });
 $('todoToggle').addEventListener('click', () => {
   todoOpen = !todoOpen;
@@ -545,6 +599,7 @@ $('board').addEventListener('click', async (ev) => {
   prefs.projectColors = prefs.projectColors || {};
   prefs.projectRatings = prefs.projectRatings || {};
   prefs.projectKnowledgeLinks = prefs.projectKnowledgeLinks || {};
+  prefs.projectTags = prefs.projectTags || {};
   todos = Array.isArray(prefs.todos) ? prefs.todos : [];
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();

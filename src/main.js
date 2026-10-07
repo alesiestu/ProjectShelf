@@ -51,6 +51,27 @@ function cleanTodos(entries) {
   }).filter(Boolean);
 }
 
+function cleanProjectTags(entries) {
+  if (!entries || typeof entries !== 'object') return {};
+  const clean = {};
+  for (const [path, tags] of Object.entries(entries)) {
+    if (typeof path !== 'string' || !Array.isArray(tags)) continue;
+    const seen = new Set();
+    const projectTags = [];
+    for (const value of tags) {
+      if (typeof value !== 'string') continue;
+      const tag = value.trim().slice(0, 50);
+      const normalized = tag.toLocaleLowerCase();
+      if (!tag || seen.has(normalized)) continue;
+      seen.add(normalized);
+      projectTags.push(tag);
+      if (projectTags.length === 12) break;
+    }
+    if (projectTags.length) clean[path] = projectTags;
+  }
+  return clean;
+}
+
 function parseGitStatus(output) {
   const lines = output.split('\n').filter(Boolean);
   const branchLine = lines.find((line) => line.startsWith('## ')) || '';
@@ -249,10 +270,11 @@ export const api = {
       projectRatings: (await app.store.get('projectRatings')) || {},
       projectKnowledgeLinks: cleanKnowledgeLinks(projectKnowledgeLinks),
       todos: cleanTodos(await app.store.get('todos')),
+      projectTags: cleanProjectTags(await app.store.get('projectTags')),
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -276,6 +298,7 @@ export const api = {
       await app.store.set('projectKnowledgeLinks', cleanKnowledgeLinks(projectKnowledgeLinks));
     }
     if (Array.isArray(todos)) await app.store.set('todos', cleanTodos(todos));
+    if (projectTags && typeof projectTags === 'object') await app.store.set('projectTags', cleanProjectTags(projectTags));
     return true;
   },
 
