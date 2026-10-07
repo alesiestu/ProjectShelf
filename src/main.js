@@ -6,6 +6,15 @@ const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
 const MAX_PROJECT_RATING = 5;
 
+function isWebUrl(value) {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
 // older read(buf) and wait() result shapes as fallbacks for dev runtimes.
 async function run(args, cwd) {
@@ -179,10 +188,11 @@ export const api = {
       language: (await app.store.get('language')) || null,
       projectColors: (await app.store.get('projectColors')) || {},
       projectRatings: (await app.store.get('projectRatings')) || {},
+      projectNotionLinks: (await app.store.get('projectNotionLinks')) || {},
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectNotionLinks }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -201,6 +211,13 @@ export const api = {
         }
       }
       await app.store.set('projectRatings', cleanRatings);
+    }
+    if (projectNotionLinks && typeof projectNotionLinks === 'object') {
+      const cleanLinks = {};
+      for (const [path, url] of Object.entries(projectNotionLinks)) {
+        if (typeof path === 'string' && typeof url === 'string' && isWebUrl(url)) cleanLinks[path] = url;
+      }
+      await app.store.set('projectNotionLinks', cleanLinks);
     }
     return true;
   },
@@ -233,6 +250,11 @@ export const api = {
       return true;
     }
     return false;
+  },
+
+  async openUrl({ url }) {
+    if (!isWebUrl(url)) return false;
+    return (await run(['open', url])).code === 0;
   },
 };
 

@@ -13,6 +13,7 @@ let prefs = { workspace: '', ignored: [] };
 let projects = [];
 let language = 'en';
 let activeFilter = 'all';
+let notionPath = '';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 const RATING_FILTERS = [5, 4, 3, 1];
 
@@ -31,6 +32,9 @@ const I18N = {
     noTrackingReason: 'branch not tracking a remote', tooRecentReason: 'newer than 180 days',
     today: 'today', yesterday: 'yesterday', days: '{n} days', months: '{n} months', noCommits: 'no commits',
     changeLanguage: 'Change language',
+    notion: 'Notion', addNotion: 'Add Notion', editNotion: 'Edit Notion', notionTitle: 'Notion page',
+    notionLabel: 'Notion page URL', notionPlaceholder: 'https://www.notion.so/…', save: 'Save', cancel: 'Cancel', remove: 'Remove',
+    invalidUrl: 'Enter a valid http:// or https:// URL.',
     chooseColor: 'Choose card color', removeColor: 'No color',
     blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
     priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating',
@@ -49,6 +53,9 @@ const I18N = {
     noTrackingReason: 'il branch non segue un remote', tooRecentReason: 'più recente di 180 giorni',
     today: 'oggi', yesterday: 'ieri', days: '{n} giorni', months: '{n} mesi', noCommits: 'nessun commit',
     changeLanguage: 'Cambia lingua',
+    notion: 'Notion', addNotion: 'Aggiungi Notion', editNotion: 'Modifica Notion', notionTitle: 'Pagina Notion',
+    notionLabel: 'URL della pagina Notion', notionPlaceholder: 'https://www.notion.so/…', save: 'Salva', cancel: 'Annulla', remove: 'Rimuovi',
+    invalidUrl: 'Inserisci un URL valido che inizi con http:// o https://.',
     chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
     blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
     priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione',
@@ -84,6 +91,16 @@ function projectColor(path) {
 function projectRating(path) {
   const rating = prefs.projectRatings && prefs.projectRatings[path];
   return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+}
+
+function projectNotionLink(path) {
+  const link = prefs.projectNotionLinks && prefs.projectNotionLinks[path];
+  try {
+    const protocol = new URL(link).protocol;
+    return protocol === 'http:' || protocol === 'https:' ? link : '';
+  } catch {
+    return '';
+  }
 }
 
 function ratingControl(p) {
@@ -133,6 +150,8 @@ function card(p) {
     <div class="row"><span>${esc(t('size'))}</span><b>${fmtSize(p.sizeMB)}</b></div>
     ${safety}
     <div class="acts" data-path="${esc(p.path)}">
+      <button class="notion-action" data-k="notion">${esc(projectNotionLink(p.path) ? t('notion') : t('addNotion'))}</button>
+      ${projectNotionLink(p.path) ? `<button data-k="notion-edit">${esc(t('editNotion'))}</button>` : ''}
       <button data-k="finder">${esc(t('finder'))}</button>
       <button data-k="terminal">${esc(t('terminal'))}</button>
       <button data-k="code">${esc(t('vsCode'))}</button>
@@ -257,7 +276,56 @@ function applyLanguage() {
   $('language').setAttribute('aria-label', t('changeLanguage'));
   $('pick').textContent = t('chooseWorkspace');
   $('rescan').textContent = t('rescan');
+  $('notionLabel').textContent = t('notionLabel');
+  $('notionUrl').placeholder = t('notionPlaceholder');
+  $('notionCancel').textContent = t('cancel');
+  $('notionRemove').textContent = t('remove');
+  $('notionSave').textContent = t('save');
 }
+
+function openNotionDialog(path) {
+  notionPath = path;
+  const link = projectNotionLink(path);
+  $('notionTitle').textContent = link ? t('editNotion') : t('notionTitle');
+  $('notionUrl').value = link;
+  $('notionError').textContent = '';
+  $('notionRemove').hidden = !link;
+  $('notionDialog').showModal();
+  $('notionUrl').focus();
+}
+
+function validWebUrl(value) {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+$('notionForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const url = $('notionUrl').value.trim();
+  if (!validWebUrl(url)) {
+    $('notionError').textContent = t('invalidUrl');
+    $('notionUrl').focus();
+    return;
+  }
+  const projectNotionLinks = { ...(prefs.projectNotionLinks || {}), [notionPath]: url };
+  prefs.projectNotionLinks = projectNotionLinks;
+  await tiny.api.call('savePrefs', { projectNotionLinks });
+  $('notionDialog').close();
+  render();
+});
+$('notionCancel').addEventListener('click', () => $('notionDialog').close());
+$('notionRemove').addEventListener('click', async () => {
+  const projectNotionLinks = { ...(prefs.projectNotionLinks || {}) };
+  delete projectNotionLinks[notionPath];
+  prefs.projectNotionLinks = projectNotionLinks;
+  await tiny.api.call('savePrefs', { projectNotionLinks });
+  $('notionDialog').close();
+  render();
+});
 
 $('board').addEventListener('click', async (ev) => {
   const ratingButton = ev.target.closest('[data-rating-path]');
@@ -278,6 +346,16 @@ $('board').addEventListener('click', async (ev) => {
   if (!btn) return;
   const path = btn.parentElement.dataset.path;
   const kind = btn.dataset.k;
+  if (kind === 'notion-edit') {
+    openNotionDialog(path);
+    return;
+  }
+  if (kind === 'notion') {
+    const url = projectNotionLink(path);
+    if (url) await tiny.api.call('openUrl', { url });
+    else openNotionDialog(path);
+    return;
+  }
   if (kind === 'copy') {
     tiny.clipboard.write({ text: path });
     const old = btn.textContent;
@@ -292,6 +370,7 @@ $('board').addEventListener('click', async (ev) => {
   prefs = await tiny.api.call('loadPrefs');
   prefs.projectColors = prefs.projectColors || {};
   prefs.projectRatings = prefs.projectRatings || {};
+  prefs.projectNotionLinks = prefs.projectNotionLinks || {};
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();
   $('ws').textContent = prefs.workspace;

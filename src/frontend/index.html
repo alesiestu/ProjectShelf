@@ -24,6 +24,21 @@
 
 <main class="board" id="board"></main>
 
+<dialog id="notionDialog" class="notion-dialog">
+  <form method="dialog" id="notionForm">
+    <h2 id="notionTitle">Notion</h2>
+    <label for="notionUrl" id="notionLabel">Notion page URL</label>
+    <input id="notionUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://www.notion.so/…">
+    <p id="notionError" class="notion-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="notionRemove" class="danger">Remove</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" id="notionCancel">Cancel</button>
+      <button type="submit" id="notionSave" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <script src="app.js"></script>
 </body>
 </html>
