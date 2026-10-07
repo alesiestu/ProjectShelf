@@ -51,6 +51,22 @@ function cleanTodos(entries) {
   }).filter(Boolean);
 }
 
+function parseGitStatus(output) {
+  const lines = output.split('\n').filter(Boolean);
+  const branchLine = lines.find((line) => line.startsWith('## ')) || '';
+  const files = lines.filter((line) => !line.startsWith('## ')).map((line) => {
+    const code = line.slice(0, 2);
+    const path = line.slice(3).trim();
+    const status = code === '??' ? 'untracked'
+      : code.includes('D') ? 'deleted'
+      : code.includes('A') ? 'added'
+      : code.includes('R') ? 'renamed'
+      : 'modified';
+    return { code, path, status, staged: code[0] !== ' ', unstaged: code[1] !== ' ' };
+  });
+  return { branchLine, files };
+}
+
 // txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
 // older read(buf) and wait() result shapes as fallbacks for dev runtimes.
 async function run(args, cwd) {
@@ -291,6 +307,42 @@ export const api = {
       return true;
     }
     return false;
+  },
+
+  async repoStatus({ path }) {
+    const [status, branch, remote, commit] = await Promise.all([
+      git(path, 'status', '--short', '--branch'),
+      git(path, 'branch', '--show-current'),
+      git(path, 'remote', 'get-url', 'origin'),
+      git(path, 'log', '-1', '--format=%h|%s|%ct'),
+    ]);
+    if (status.code !== 0) return { error: 'Unable to read Git status.' };
+    const parsed = parseGitStatus(status.out);
+    const [hash = '', subject = '', timestamp = ''] = commit.out.split('|');
+    return {
+      path,
+      branch: branch.out || parsed.branchLine.replace(/^##\s*/, '') || '(detached)',
+      remote: remote.out || '',
+      commit: hash ? { hash, subject, timestamp: Number(timestamp) || null } : null,
+      files: parsed.files,
+      counts: {
+        total: parsed.files.length,
+        staged: parsed.files.filter((file) => file.staged).length,
+        unstaged: parsed.files.filter((file) => file.unstaged).length,
+      },
+    };
+  },
+
+  async repoDiff({ path, file }) {
+    if (!path || !file) return { diff: '', available: false };
+    const [unstaged, staged] = await Promise.all([
+      git(path, 'diff', '--no-ext-diff', '--', file),
+      git(path, 'diff', '--no-ext-diff', '--cached', '--', file),
+    ]);
+    const sections = [];
+    if (staged.out) sections.push('### Staged\n' + staged.out);
+    if (unstaged.out) sections.push('### Unstaged\n' + unstaged.out);
+    return { file, diff: sections.join('\n\n'), available: sections.length > 0 };
   },
 
   async openUrl({ url }) {

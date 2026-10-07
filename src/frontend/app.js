@@ -18,6 +18,7 @@ let knowledgeProvider = 'notion';
 let todos = [];
 let todoOpen = true;
 let todoEditingId = '';
+let gitPath = '';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
@@ -44,6 +45,8 @@ const I18N = {
     chooseColor: 'Choose card color', removeColor: 'No color',
     blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
     priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating', ratingFilter: 'Show projects with at least {n} stars',
+    gitStatus: 'Git status', branch: 'Branch', latestCommit: 'Latest commit', noCommit: 'No commits', openTerminal: 'Open Terminal', close: 'Close', diff: 'Diff', noDiff: 'No diff available', loading: 'Loading…', gitError: 'Unable to read Git status',
+    statusModified: 'modified', statusAdded: 'added', statusDeleted: 'deleted', statusRenamed: 'renamed', statusUntracked: 'untracked',
   },
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
@@ -68,6 +71,8 @@ const I18N = {
     chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
     blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
     priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione', ratingFilter: 'Mostra progetti con almeno {n} stelle',
+    gitStatus: 'Stato Git', branch: 'Branch', latestCommit: 'Ultimo commit', noCommit: 'Nessun commit', openTerminal: 'Apri Terminale', close: 'Chiudi', diff: 'Diff', noDiff: 'Nessun diff disponibile', loading: 'Caricamento…', gitError: 'Impossibile leggere lo stato Git',
+    statusModified: 'modificato', statusAdded: 'aggiunto', statusDeleted: 'eliminato', statusRenamed: 'rinominato', statusUntracked: 'non tracciato',
   },
 };
 
@@ -152,7 +157,7 @@ function colorPicker(p) {
 function card(p) {
   const tags = [];
   const color = projectColor(p.path);
-  if (p.dirty) tags.push(`<span class="tag dirty">● ${p.dirtyFiles} ${esc(t('modified'))}</span>`);
+  if (p.dirty) tags.push(`<button class="tag dirty status-trigger" data-repo-status="${esc(p.path)}" aria-label="${esc(t('gitStatus'))}">● ${p.dirtyFiles} ${esc(t('modified'))}</button>`);
   if (!p.remote) tags.push(`<span class="tag noremote">⚠ ${esc(t('noRemote'))}</span>`);
   if (p.unpushed) tags.push(`<span class="tag unpushed">↑ ${p.unpushed} ${esc(t('unpushed'))}</span>`);
   if (!tags.length) tags.push(`<span class="tag">${esc(t('clean'))}</span>`);
@@ -224,6 +229,39 @@ function openTodoDialog(id = '') {
   $('todoSave').textContent = t('save');
   $('todoDialog').showModal();
   $('todoText').focus();
+}
+
+function gitStatusLabel(status) {
+  return t('status' + status[0].toUpperCase() + status.slice(1));
+}
+
+function renderGitStatus(status) {
+  $('gitTitle').textContent = t('gitStatus');
+  $('gitSummary').innerHTML = `<div><span>${esc(t('branch'))}</span><b>${esc(status.branch)}</b></div>
+    <div><span>${esc(t('remote'))}</span><b>${status.remote ? esc(status.remote) : esc(t('localOnly'))}</b></div>
+    <div><span>${esc(t('latestCommit'))}</span><b>${status.commit ? esc(status.commit.hash + ' · ' + status.commit.subject) : esc(t('noCommit'))}</b></div>`;
+  $('gitFiles').innerHTML = status.files.length ? status.files.map((file) =>
+    `<div class="git-file-row"><span class="git-file-status ${esc(file.status)}">${esc(gitStatusLabel(file.status))}</span><code>${esc(file.path)}</code><button data-git-file="${esc(file.path)}">${esc(t('diff'))}</button></div>`,
+  ).join('') : `<div class="todo-empty">${esc(t('noDiff'))}</div>`;
+  $('gitDiffPanel').open = false;
+  $('gitDiff').textContent = '';
+  $('gitTerminal').textContent = t('openTerminal');
+  $('gitClose').setAttribute('aria-label', t('close'));
+}
+
+async function openGitDialog(path) {
+  gitPath = path;
+  $('gitSummary').textContent = t('loading');
+  $('gitFiles').textContent = '';
+  $('gitDiff').textContent = '';
+  $('gitDiffPanel').open = false;
+  $('gitDialog').showModal();
+  const status = await tiny.api.call('repoStatus', { path });
+  if (status.error) {
+    $('gitSummary').textContent = t('gitError') + ': ' + status.error;
+    return;
+  }
+  renderGitStatus(status);
 }
 
 function render() {
@@ -355,6 +393,18 @@ $('todoForm').addEventListener('submit', async (ev) => {
   renderTodos();
 });
 $('todoCancel').addEventListener('click', () => $('todoDialog').close());
+$('gitClose').addEventListener('click', () => $('gitDialog').close());
+$('gitTerminal').addEventListener('click', () => {
+  if (gitPath) tiny.api.call('openIn', { path: gitPath, kind: 'terminal' });
+});
+$('gitFiles').addEventListener('click', async (ev) => {
+  const button = ev.target.closest('[data-git-file]');
+  if (!button) return;
+  const result = await tiny.api.call('repoDiff', { path: gitPath, file: button.dataset.gitFile });
+  $('gitDiffTitle').textContent = t('diff') + ': ' + button.dataset.gitFile;
+  $('gitDiff').textContent = result.available ? result.diff : t('noDiff');
+  $('gitDiffPanel').open = true;
+});
 $('board').addEventListener('click', async (ev) => {
   const swatch = ev.target.closest('[data-color-path]');
   if (!swatch) return;
@@ -446,6 +496,12 @@ $('notionRemove').addEventListener('click', async () => {
 });
 
 $('board').addEventListener('click', async (ev) => {
+  const statusTag = ev.target.closest('[data-repo-status]');
+  if (statusTag) {
+    ev.stopPropagation();
+    await openGitDialog(statusTag.dataset.repoStatus);
+    return;
+  }
   const ratingButton = ev.target.closest('[data-rating-path]');
   if (ratingButton) {
     ev.stopPropagation();

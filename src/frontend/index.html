@@ -64,6 +64,22 @@
   </form>
 </dialog>
 
+<dialog id="gitDialog" class="notion-dialog git-dialog">
+  <div class="git-dialog-body">
+    <div class="git-dialog-head">
+      <h2 id="gitTitle">Git status</h2>
+      <button type="button" id="gitClose">×</button>
+    </div>
+    <div id="gitSummary" class="git-summary"></div>
+    <div id="gitFiles" class="git-files"></div>
+    <details id="gitDiffPanel" class="git-diff-panel">
+      <summary id="gitDiffTitle">Diff</summary>
+      <pre id="gitDiff"></pre>
+    </details>
+    <button type="button" id="gitTerminal" class="primary">Open Terminal</button>
+  </div>
+</dialog>
+
 <script src="app.js"></script>
 </body>
 </html>
