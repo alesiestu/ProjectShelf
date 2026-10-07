@@ -652,7 +652,7 @@ export const api = {
         },
       };
     }
-    const [status, branch, remote, commit] = await Promise.all([
+    const [status, branch, remoteUrlResult, commit] = await Promise.all([
       git(path, 'status', '--short', '--branch'),
       git(path, 'branch', '--show-current'),
       git(path, 'remote', 'get-url', 'origin'),
@@ -664,7 +664,7 @@ export const api = {
     return {
       path,
       branch: branch.out || parsed.branchLine.replace(/^##\s*/, '') || '(detached)',
-      remote: remote.out || '',
+      remote: remoteUrlResult.out || '',
       commit: hash ? { hash, subject, timestamp: Number(timestamp) || null } : null,
       files: parsed.files,
       counts: {
