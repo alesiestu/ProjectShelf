@@ -469,11 +469,12 @@ export const api = {
   async mcpConfig() {
     await refreshMcpInfo();
     const url = mcpInfo.endpoint || 'http://127.0.0.1:PORT/mcp';
+    const token = mcpInfo.token || 'TOKEN';
     return {
       ...mcpInfo,
       url,
-      config: JSON.stringify({ mcp_servers: { projectShelf: { url, headers: { Authorization: `Bearer ${mcpInfo.token || 'TOKEN'}` } } } }, null, 2),
-      prompt: `Connect to ProjectShelf at ${url} using Authorization: Bearer ${mcpInfo.token || 'TOKEN'}. Use list_projects before update_project. You may change only project colors, ratings, tags, Notion links, Obsidian links, and Todo items. Never edit files, run shell commands, perform Git operations, or delete repositories.`,
+      config: `[mcp_servers.projectShelf]\nurl = "${url}"\nhttp_headers = { Authorization = "Bearer ${token}" }`,
+      prompt: `Connect Codex to ProjectShelf by adding the generated block to ~/.codex/config.toml. The MCP endpoint is ${url} and authentication is the Authorization bearer token shown above. Use list_projects before update_project. You may change only project colors, ratings, tags, Notion links, Obsidian links, and Todo items. Never edit files, run shell commands, perform Git operations, or delete repositories.`,
     };
   },
 
