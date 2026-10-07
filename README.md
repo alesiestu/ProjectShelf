@@ -12,7 +12,9 @@ Scegli una cartella e ProjectShelf cerca i progetti al suo interno. Per ogni rep
 - dimensione del progetto;
 - indicazione di sicurezza prima di rimuoverlo localmente.
 
-Sono disponibili anche filtri per vedere solo i progetti modificati, senza remote o recuperabili, oltre a pulsanti per aprire un progetto in Finder, Terminale o VS Code.
+Ogni card può essere personalizzata con un colore, una valutazione da una a cinque stelle, tag liberi e link a una nota Notion e/o Obsidian. Sono disponibili filtri per vedere solo i progetti modificati, senza remote, recuperabili o con una priorità minima. Cliccando sul numero dei file modificati si apre una vista sintetica dello status Git, con il diff completo disponibile quando serve.
+
+La sezione Todo consente di creare attività semplici e collegarle a uno o più progetti. Sono disponibili anche pulsanti per aprire un progetto in Finder, Terminale o VS Code.
 
 ## Workspace remoti via SSH
 
