@@ -13,7 +13,8 @@ let prefs = { workspace: '', ignored: [] };
 let projects = [];
 let language = 'en';
 let activeFilter = 'all';
-let notionPath = '';
+let knowledgePath = '';
+let knowledgeProvider = 'notion';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 const RATING_FILTERS = [5, 4, 3, 1];
 
@@ -33,8 +34,9 @@ const I18N = {
     today: 'today', yesterday: 'yesterday', days: '{n} days', months: '{n} months', noCommits: 'no commits',
     changeLanguage: 'Change language',
     notion: 'Notion', addNotion: 'Add Notion', editNotion: 'Edit Notion', notionTitle: 'Notion page',
-    notionLabel: 'Notion page URL', notionPlaceholder: 'https://www.notion.so/…', save: 'Save', cancel: 'Cancel', remove: 'Remove',
-    invalidUrl: 'Enter a valid http:// or https:// URL.',
+    obsidian: 'Obsidian', addObsidian: 'Add Obsidian', editObsidian: 'Edit Obsidian', obsidianTitle: 'Obsidian note',
+    notionLabel: 'Notion page URL', notionPlaceholder: 'https://www.notion.so/…', obsidianLabel: 'Obsidian URI', obsidianPlaceholder: 'obsidian://open?vault=…&file=…',
+    save: 'Save', cancel: 'Cancel', remove: 'Remove', invalidNotionUrl: 'Enter a valid http:// or https:// URL.', invalidObsidianUrl: 'Enter a valid obsidian:// URI.',
     chooseColor: 'Choose card color', removeColor: 'No color',
     blue: 'Blue', green: 'Green', yellow: 'Yellow', orange: 'Orange', red: 'Red', purple: 'Purple',
     priority: 'Priority', stars: '{n} stars', atLeastStars: '{n}+ stars', ratingAction: 'Set rating to {n} stars', clearRating: 'Clear rating',
@@ -54,8 +56,9 @@ const I18N = {
     today: 'oggi', yesterday: 'ieri', days: '{n} giorni', months: '{n} mesi', noCommits: 'nessun commit',
     changeLanguage: 'Cambia lingua',
     notion: 'Notion', addNotion: 'Aggiungi Notion', editNotion: 'Modifica Notion', notionTitle: 'Pagina Notion',
-    notionLabel: 'URL della pagina Notion', notionPlaceholder: 'https://www.notion.so/…', save: 'Salva', cancel: 'Annulla', remove: 'Rimuovi',
-    invalidUrl: 'Inserisci un URL valido che inizi con http:// o https://.',
+    obsidian: 'Obsidian', addObsidian: 'Aggiungi Obsidian', editObsidian: 'Modifica Obsidian', obsidianTitle: 'Nota Obsidian',
+    notionLabel: 'URL della pagina Notion', notionPlaceholder: 'https://www.notion.so/…', obsidianLabel: 'URI Obsidian', obsidianPlaceholder: 'obsidian://open?vault=…&file=…',
+    save: 'Salva', cancel: 'Annulla', remove: 'Rimuovi', invalidNotionUrl: 'Inserisci un URL valido che inizi con http:// o https://.', invalidObsidianUrl: 'Inserisci un URI valido che inizi con obsidian://.',
     chooseColor: 'Scegli colore card', removeColor: 'Nessun colore',
     blue: 'Blu', green: 'Verde', yellow: 'Giallo', orange: 'Arancione', red: 'Rosso', purple: 'Viola',
     priority: 'Priorità', stars: '{n} stelle', atLeastStars: '{n}+ stelle', ratingAction: 'Imposta valutazione a {n} stelle', clearRating: 'Azzera valutazione',
@@ -93,14 +96,20 @@ function projectRating(path) {
   return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : 0;
 }
 
-function projectNotionLink(path) {
-  const link = prefs.projectNotionLinks && prefs.projectNotionLinks[path];
+function projectKnowledgeLink(path, provider) {
+  const link = prefs.projectKnowledgeLinks && prefs.projectKnowledgeLinks[path]?.[provider];
   try {
     const protocol = new URL(link).protocol;
-    return protocol === 'http:' || protocol === 'https:' ? link : '';
+    return provider === 'obsidian'
+      ? (protocol === 'obsidian:' ? link : '')
+      : (protocol === 'http:' || protocol === 'https:' ? link : '');
   } catch {
     return '';
   }
+}
+
+function providerText(provider, key) {
+  return t(provider + key[0].toUpperCase() + key.slice(1));
 }
 
 function ratingControl(p) {
@@ -150,8 +159,11 @@ function card(p) {
     <div class="row"><span>${esc(t('size'))}</span><b>${fmtSize(p.sizeMB)}</b></div>
     ${safety}
     <div class="acts" data-path="${esc(p.path)}">
-      <button class="notion-action" data-k="notion">${esc(projectNotionLink(p.path) ? t('notion') : t('addNotion'))}</button>
-      ${projectNotionLink(p.path) ? `<button data-k="notion-edit">${esc(t('editNotion'))}</button>` : ''}
+      ${['notion', 'obsidian'].map((provider) => {
+        const link = projectKnowledgeLink(p.path, provider);
+        return `<button class="${provider}-action" data-k="${provider}">${esc(link ? t(provider) : providerText(provider, 'add'))}</button>
+          ${link ? `<button data-k="${provider}-edit">${esc(providerText(provider, 'edit'))}</button>` : ''}`;
+      }).join('')}
       <button data-k="finder">${esc(t('finder'))}</button>
       <button data-k="terminal">${esc(t('terminal'))}</button>
       <button data-k="code">${esc(t('vsCode'))}</button>
@@ -276,17 +288,20 @@ function applyLanguage() {
   $('language').setAttribute('aria-label', t('changeLanguage'));
   $('pick').textContent = t('chooseWorkspace');
   $('rescan').textContent = t('rescan');
-  $('notionLabel').textContent = t('notionLabel');
-  $('notionUrl').placeholder = t('notionPlaceholder');
+  $('notionLabel').textContent = t(knowledgeProvider === 'obsidian' ? 'obsidianLabel' : 'notionLabel');
+  $('notionUrl').placeholder = t(knowledgeProvider === 'obsidian' ? 'obsidianPlaceholder' : 'notionPlaceholder');
   $('notionCancel').textContent = t('cancel');
   $('notionRemove').textContent = t('remove');
   $('notionSave').textContent = t('save');
 }
 
-function openNotionDialog(path) {
-  notionPath = path;
-  const link = projectNotionLink(path);
-  $('notionTitle').textContent = link ? t('editNotion') : t('notionTitle');
+function openKnowledgeDialog(path, provider) {
+  knowledgePath = path;
+  knowledgeProvider = provider;
+  const link = projectKnowledgeLink(path, provider);
+  $('notionTitle').textContent = link ? providerText(provider, 'edit') : providerText(provider, 'title');
+  $('notionLabel').textContent = t(provider === 'obsidian' ? 'obsidianLabel' : 'notionLabel');
+  $('notionUrl').placeholder = t(provider === 'obsidian' ? 'obsidianPlaceholder' : 'notionPlaceholder');
   $('notionUrl').value = link;
   $('notionError').textContent = '';
   $('notionRemove').hidden = !link;
@@ -294,10 +309,12 @@ function openNotionDialog(path) {
   $('notionUrl').focus();
 }
 
-function validWebUrl(value) {
+function validKnowledgeLink(value, provider) {
   try {
     const protocol = new URL(value).protocol;
-    return protocol === 'http:' || protocol === 'https:';
+    return provider === 'obsidian'
+      ? protocol === 'obsidian:'
+      : protocol === 'http:' || protocol === 'https:';
   } catch {
     return false;
   }
@@ -306,23 +323,27 @@ function validWebUrl(value) {
 $('notionForm').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const url = $('notionUrl').value.trim();
-  if (!validWebUrl(url)) {
-    $('notionError').textContent = t('invalidUrl');
+  if (!validKnowledgeLink(url, knowledgeProvider)) {
+    $('notionError').textContent = t(knowledgeProvider === 'obsidian' ? 'invalidObsidianUrl' : 'invalidNotionUrl');
     $('notionUrl').focus();
     return;
   }
-  const projectNotionLinks = { ...(prefs.projectNotionLinks || {}), [notionPath]: url };
-  prefs.projectNotionLinks = projectNotionLinks;
-  await tiny.api.call('savePrefs', { projectNotionLinks });
+  const projectKnowledgeLinks = { ...(prefs.projectKnowledgeLinks || {}) };
+  projectKnowledgeLinks[knowledgePath] = { ...(projectKnowledgeLinks[knowledgePath] || {}), [knowledgeProvider]: url };
+  prefs.projectKnowledgeLinks = projectKnowledgeLinks;
+  await tiny.api.call('savePrefs', { projectKnowledgeLinks });
   $('notionDialog').close();
   render();
 });
 $('notionCancel').addEventListener('click', () => $('notionDialog').close());
 $('notionRemove').addEventListener('click', async () => {
-  const projectNotionLinks = { ...(prefs.projectNotionLinks || {}) };
-  delete projectNotionLinks[notionPath];
-  prefs.projectNotionLinks = projectNotionLinks;
-  await tiny.api.call('savePrefs', { projectNotionLinks });
+  const projectKnowledgeLinks = { ...(prefs.projectKnowledgeLinks || {}) };
+  const links = { ...(projectKnowledgeLinks[knowledgePath] || {}) };
+  delete links[knowledgeProvider];
+  if (Object.keys(links).length) projectKnowledgeLinks[knowledgePath] = links;
+  else delete projectKnowledgeLinks[knowledgePath];
+  prefs.projectKnowledgeLinks = projectKnowledgeLinks;
+  await tiny.api.call('savePrefs', { projectKnowledgeLinks });
   $('notionDialog').close();
   render();
 });
@@ -346,14 +367,14 @@ $('board').addEventListener('click', async (ev) => {
   if (!btn) return;
   const path = btn.parentElement.dataset.path;
   const kind = btn.dataset.k;
-  if (kind === 'notion-edit') {
-    openNotionDialog(path);
+  if (kind === 'notion-edit' || kind === 'obsidian-edit') {
+    openKnowledgeDialog(path, kind === 'obsidian-edit' ? 'obsidian' : 'notion');
     return;
   }
-  if (kind === 'notion') {
-    const url = projectNotionLink(path);
+  if (kind === 'notion' || kind === 'obsidian') {
+    const url = projectKnowledgeLink(path, kind);
     if (url) await tiny.api.call('openUrl', { url });
-    else openNotionDialog(path);
+    else openKnowledgeDialog(path, kind);
     return;
   }
   if (kind === 'copy') {
@@ -370,7 +391,7 @@ $('board').addEventListener('click', async (ev) => {
   prefs = await tiny.api.call('loadPrefs');
   prefs.projectColors = prefs.projectColors || {};
   prefs.projectRatings = prefs.projectRatings || {};
-  prefs.projectNotionLinks = prefs.projectNotionLinks || {};
+  prefs.projectKnowledgeLinks = prefs.projectKnowledgeLinks || {};
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();
   $('ws').textContent = prefs.workspace;

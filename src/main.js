@@ -6,13 +6,31 @@ const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
 const MAX_PROJECT_RATING = 5;
 
-function isWebUrl(value) {
+function linkProtocol(value) {
   try {
-    const protocol = new URL(value).protocol;
-    return protocol === 'http:' || protocol === 'https:';
+    return new URL(value).protocol;
   } catch {
-    return false;
+    return '';
   }
+}
+
+function isAllowedLink(value, provider) {
+  const protocol = linkProtocol(value);
+  if (provider === 'obsidian') return protocol === 'obsidian:';
+  return protocol === 'http:' || protocol === 'https:';
+}
+
+function cleanKnowledgeLinks(entries) {
+  const clean = {};
+  if (!entries || typeof entries !== 'object') return clean;
+  for (const [path, links] of Object.entries(entries)) {
+    if (!links || typeof links !== 'object') continue;
+    const item = {};
+    if (typeof links.notion === 'string' && isAllowedLink(links.notion, 'notion')) item.notion = links.notion;
+    if (typeof links.obsidian === 'string' && isAllowedLink(links.obsidian, 'obsidian')) item.obsidian = links.obsidian;
+    if (Object.keys(item).length) clean[path] = item;
+  }
+  return clean;
 }
 
 // txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
@@ -182,17 +200,24 @@ async function findRepos(root, ignored, depth, found) {
 
 export const api = {
   async loadPrefs(_p, app) {
+    const storedKnowledgeLinks = await app.store.get('projectKnowledgeLinks');
+    const legacyNotionLinks = await app.store.get('projectNotionLinks');
+    const projectKnowledgeLinks = storedKnowledgeLinks || Object.fromEntries(
+      Object.entries(legacyNotionLinks || {})
+        .filter(([path, url]) => typeof path === 'string' && isAllowedLink(url, 'notion'))
+        .map(([path, url]) => [path, { notion: url }]),
+    );
     return {
       workspace: (await app.store.get('workspace')) || tjs.homeDir + '/Workspace',
       ignored: (await app.store.get('ignored')) || ['node_modules', '.cache', 'vendor', 'dist', 'build'],
       language: (await app.store.get('language')) || null,
       projectColors: (await app.store.get('projectColors')) || {},
       projectRatings: (await app.store.get('projectRatings')) || {},
-      projectNotionLinks: (await app.store.get('projectNotionLinks')) || {},
+      projectKnowledgeLinks: cleanKnowledgeLinks(projectKnowledgeLinks),
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectNotionLinks }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -212,12 +237,8 @@ export const api = {
       }
       await app.store.set('projectRatings', cleanRatings);
     }
-    if (projectNotionLinks && typeof projectNotionLinks === 'object') {
-      const cleanLinks = {};
-      for (const [path, url] of Object.entries(projectNotionLinks)) {
-        if (typeof path === 'string' && typeof url === 'string' && isWebUrl(url)) cleanLinks[path] = url;
-      }
-      await app.store.set('projectNotionLinks', cleanLinks);
+    if (projectKnowledgeLinks && typeof projectKnowledgeLinks === 'object') {
+      await app.store.set('projectKnowledgeLinks', cleanKnowledgeLinks(projectKnowledgeLinks));
     }
     return true;
   },
@@ -253,7 +274,7 @@ export const api = {
   },
 
   async openUrl({ url }) {
-    if (!isWebUrl(url)) return false;
+    if (!isAllowedLink(url, linkProtocol(url) === 'obsidian:' ? 'obsidian' : 'notion')) return false;
     return (await run(['open', url])).code === 0;
   },
 };

@@ -134,6 +134,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .acts { display: flex; gap: 4px; flex-wrap: wrap; }
 .acts button { padding: 3px 7px; font-size: 11px; }
 .acts button.notion-action { color: #b07a45; border-color: #b07a45; }
+.acts button.obsidian-action { color: #8f7cff; border-color: #8f7cff; }
 .notion-dialog {
   width: min(440px, calc(100vw - 32px)); padding: 0; color: var(--fg);
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
