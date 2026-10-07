@@ -109,7 +109,11 @@ function projectKnowledgeLink(path, provider) {
 }
 
 function providerText(provider, key) {
-  return t(provider + key[0].toUpperCase() + key.slice(1));
+  const labels = {
+    notion: { add: 'addNotion', edit: 'editNotion', title: 'notionTitle' },
+    obsidian: { add: 'addObsidian', edit: 'editObsidian', title: 'obsidianTitle' },
+  };
+  return t(labels[provider][key]);
 }
 
 function ratingControl(p) {
