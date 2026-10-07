@@ -20,6 +20,16 @@
 
 <section class="filters" id="filters" aria-label="Filters"></section>
 
+<section class="todo-section" id="todoSection">
+  <div class="todo-head">
+    <button type="button" id="todoToggle" class="todo-toggle" aria-expanded="true">
+      <span id="todoChevron">⌄</span><span id="todoTitle">Todo</span><b id="todoCount">0</b>
+    </button>
+    <button type="button" id="todoAdd" class="primary">Add todo</button>
+  </div>
+  <div id="todoList" class="todo-list"></div>
+</section>
+
 <div class="bar" id="bar"><div class="fill" id="fill"></div><span id="barText"></span></div>
 
 <main class="board" id="board"></main>
@@ -35,6 +45,21 @@
       <span class="dialog-spacer"></span>
       <button type="button" id="notionCancel">Cancel</button>
       <button type="submit" id="notionSave" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="todoDialog" class="notion-dialog todo-dialog">
+  <form method="dialog" id="todoForm">
+    <h2 id="todoDialogTitle">Add todo</h2>
+    <label for="todoText" id="todoTextLabel">Task</label>
+    <input id="todoText" type="text" autocomplete="off" maxlength="240">
+    <label id="todoProjectsLabel">Projects</label>
+    <div id="todoProjects" class="todo-projects"></div>
+    <p id="todoError" class="notion-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="todoCancel">Cancel</button>
+      <button type="submit" id="todoSave" class="primary">Save</button>
     </div>
   </form>
 </dialog>

@@ -15,6 +15,9 @@ let language = 'en';
 let activeFilter = 'all';
 let knowledgePath = '';
 let knowledgeProvider = 'notion';
+let todos = [];
+let todoOpen = true;
+let todoEditingId = '';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
@@ -23,6 +26,8 @@ const I18N = {
     chooseWorkspace: 'Choose Workspace…', rescan: 'Rescan',
     repos: 'Repos', totalSize: 'Total size', dirty: 'Dirty', noRemote: 'No remote', reclaimable: 'Reclaimable',
     filters: 'Filters', all: 'All',
+    todo: 'Todo', addTodo: 'Add todo', editTodo: 'Edit todo', task: 'Task', linkedProjects: 'Projects',
+    noTodos: 'No todos yet', noProjects: 'No projects found', deleteTodo: 'Delete', todoRequired: 'Enter a task first', openTodos: '{n} open',
     remote: 'remote', localOnly: 'local only', modified: 'modified', unpushed: 'unpushed', clean: 'clean',
     lastActivity: 'Last activity', size: 'Size', safeToRemove: 'Safe to remove locally', doNotDelete: 'Do not delete',
     finder: 'Finder', terminal: 'Terminal', vsCode: 'VS Code', copyPath: 'Copy Path', copied: 'Copied',
@@ -45,6 +50,8 @@ const I18N = {
     chooseWorkspace: 'Scegli workspace…', rescan: 'Scansiona',
     repos: 'Repo', totalSize: 'Dimensione totale', dirty: 'Modificati', noRemote: 'Senza remote', reclaimable: 'Recuperabile',
     filters: 'Filtri', all: 'Tutti',
+    todo: 'Todo', addTodo: 'Aggiungi todo', editTodo: 'Modifica todo', task: 'Attività', linkedProjects: 'Progetti',
+    noTodos: 'Nessun todo', noProjects: 'Nessun progetto trovato', deleteTodo: 'Elimina', todoRequired: 'Inserisci prima un’attività', openTodos: '{n} aperti',
     remote: 'remote', localOnly: 'solo locale', modified: 'modificati', unpushed: 'non inviati', clean: 'pulito',
     lastActivity: 'Ultima attività', size: 'Dimensione', safeToRemove: 'Sicuro da rimuovere localmente', doNotDelete: 'Non cancellare',
     finder: 'Finder', terminal: 'Terminale', vsCode: 'VS Code', copyPath: 'Copia percorso', copied: 'Copiato',
@@ -175,6 +182,50 @@ function card(p) {
   </div>`;
 }
 
+function projectName(path) {
+  const project = projects.find((item) => item.path === path);
+  return project ? project.name : '';
+}
+
+function renderTodos() {
+  const openCount = todos.filter((todo) => !todo.done).length;
+  $('todoTitle').textContent = t('todo');
+  $('todoCount').textContent = t('openTodos', { n: openCount });
+  $('todoAdd').textContent = t('addTodo');
+  $('todoAdd').setAttribute('aria-label', t('addTodo'));
+  $('todoToggle').setAttribute('aria-expanded', todoOpen);
+  $('todoChevron').textContent = todoOpen ? '⌄' : '›';
+  $('todoList').hidden = !todoOpen;
+  $('todoList').innerHTML = todos.length ? todos.map((todo) => {
+    const chips = todo.projectPaths.map(projectName).filter(Boolean)
+      .map((name) => `<span class="todo-project-chip">${esc(name)}</span>`).join('');
+    return `<div class="todo-row ${todo.done ? 'done' : ''}">
+      <label class="todo-check"><input type="checkbox" data-todo-toggle="${esc(todo.id)}" ${todo.done ? 'checked' : ''}><span></span></label>
+      <span class="todo-text">${esc(todo.text)}</span>
+      <span class="todo-project-chips">${chips}</span>
+      <button class="todo-action" data-todo-edit="${esc(todo.id)}">${esc(t('editTodo'))}</button>
+      <button class="todo-action danger" data-todo-delete="${esc(todo.id)}">${esc(t('deleteTodo'))}</button>
+    </div>`;
+  }).join('') : `<div class="todo-empty">${esc(t('noTodos'))}</div>`;
+}
+
+function openTodoDialog(id = '') {
+  todoEditingId = id;
+  const todo = todos.find((item) => item.id === id);
+  $('todoDialogTitle').textContent = todo ? t('editTodo') : t('addTodo');
+  $('todoTextLabel').textContent = t('task');
+  $('todoProjectsLabel').textContent = t('linkedProjects');
+  $('todoText').value = todo ? todo.text : '';
+  $('todoError').textContent = '';
+  $('todoProjects').innerHTML = projects.length ? projects.map((project) =>
+    `<label class="todo-project-option"><input type="checkbox" value="${esc(project.path)}" ${todo?.projectPaths.includes(project.path) ? 'checked' : ''}><span>${esc(project.name)}</span></label>`,
+  ).join('') : `<div class="todo-empty">${esc(t('noProjects'))}</div>`;
+  $('todoCancel').textContent = t('cancel');
+  $('todoSave').textContent = t('save');
+  $('todoDialog').showModal();
+  $('todoText').focus();
+}
+
 function render() {
   const total = projects.length;
   const bytes = projects.reduce((n, p) => n + p.sizeMB, 0);
@@ -203,6 +254,7 @@ function render() {
   $('filters').innerHTML = `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
     `<button class="filter ${activeFilter === key ? 'active' : ''}" data-filter="${key}">${esc(label)} <b>${count}</b></button>`,
   ).join('') + ratingFilter;
+  renderTodos();
 
   const visibleProjects = projects.filter((p) => {
     if (activeFilter === 'dirty') return p.dirty;
@@ -263,6 +315,46 @@ $('filters').addEventListener('click', (ev) => {
   activeFilter = btn.dataset.filter;
   render();
 });
+$('todoToggle').addEventListener('click', () => {
+  todoOpen = !todoOpen;
+  renderTodos();
+});
+$('todoAdd').addEventListener('click', () => openTodoDialog());
+$('todoList').addEventListener('change', async (ev) => {
+  const checkbox = ev.target.closest('[data-todo-toggle]');
+  if (!checkbox) return;
+  const todo = todos.find((item) => item.id === checkbox.dataset.todoToggle);
+  if (!todo) return;
+  todo.done = checkbox.checked;
+  await tiny.api.call('savePrefs', { todos });
+  renderTodos();
+});
+$('todoList').addEventListener('click', (ev) => {
+  const edit = ev.target.closest('[data-todo-edit]');
+  if (edit) { openTodoDialog(edit.dataset.todoEdit); return; }
+  const remove = ev.target.closest('[data-todo-delete]');
+  if (remove) {
+    todos = todos.filter((todo) => todo.id !== remove.dataset.todoDelete);
+    tiny.api.call('savePrefs', { todos }).then(renderTodos);
+  }
+});
+$('todoForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const text = $('todoText').value.trim();
+  if (!text) {
+    $('todoError').textContent = t('todoRequired');
+    $('todoText').focus();
+    return;
+  }
+  const projectPaths = [...$('todoProjects').querySelectorAll('input:checked')].map((input) => input.value);
+  const existing = todos.find((todo) => todo.id === todoEditingId);
+  const next = { id: todoEditingId || 'todo-' + Date.now(), text, projectPaths, done: existing?.done === true };
+  todos = existing ? todos.map((todo) => todo.id === todoEditingId ? next : todo) : [next, ...todos];
+  await tiny.api.call('savePrefs', { todos });
+  $('todoDialog').close();
+  renderTodos();
+});
+$('todoCancel').addEventListener('click', () => $('todoDialog').close());
 $('board').addEventListener('click', async (ev) => {
   const swatch = ev.target.closest('[data-color-path]');
   if (!swatch) return;
@@ -397,6 +489,7 @@ $('board').addEventListener('click', async (ev) => {
   prefs.projectColors = prefs.projectColors || {};
   prefs.projectRatings = prefs.projectRatings || {};
   prefs.projectKnowledgeLinks = prefs.projectKnowledgeLinks || {};
+  todos = Array.isArray(prefs.todos) ? prefs.todos : [];
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();
   $('ws').textContent = prefs.workspace;

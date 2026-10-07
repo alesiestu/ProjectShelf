@@ -58,6 +58,32 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .filter-star.active, .filter-star:hover, .filter-star:focus-visible { color: #d29922; }
 .filter-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 
+.todo-section { margin: 12px 16px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.todo-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; }
+.todo-toggle { display: flex; align-items: center; gap: 6px; flex: 1; padding: 2px 0; border: 0; background: transparent; text-align: left; }
+.todo-toggle:hover { border-color: transparent; }
+.todo-toggle > span:first-child { width: 12px; color: var(--dim); }
+.todo-toggle b { color: var(--dim); font-size: 11px; font-weight: 500; }
+.todo-list { border-top: 1px solid var(--line); }
+.todo-row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 9px; border-bottom: 1px solid var(--line); }
+.todo-row:last-child { border-bottom: 0; }
+.todo-row.done .todo-text { color: var(--dim); text-decoration: line-through; }
+.todo-check input { position: absolute; opacity: 0; pointer-events: none; }
+.todo-check span { display: block; width: 15px; height: 15px; border: 1px solid var(--dim); border-radius: 4px; cursor: pointer; }
+.todo-check input:checked + span { background: var(--active); border-color: var(--active); box-shadow: inset 0 0 0 3px var(--panel); }
+.todo-text { min-width: 120px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-project-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.todo-project-chip { padding: 2px 6px; color: var(--dim); background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; font-size: 10px; }
+.todo-action { padding: 2px 6px; border: 0; background: transparent; color: var(--dim); font-size: 11px; }
+.todo-action:hover { color: var(--fg); }
+.todo-action.danger { color: var(--cleanup); }
+.todo-empty { padding: 9px; color: var(--dim); font-size: 12px; }
+.todo-dialog { max-width: 480px; }
+.todo-dialog .todo-projects { max-height: 190px; overflow: auto; margin-top: 6px; padding: 5px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; }
+.todo-project-option { display: flex; align-items: center; gap: 7px; padding: 5px; font-size: 12px; cursor: pointer; }
+.todo-project-option:hover { background: var(--panel); }
+.todo-project-option input { width: 14px; height: 14px; }
+
 .bar { display: none; padding: 10px 16px 0; align-items: center; gap: 8px; }
 .bar.on { display: flex; }
 .bar .fill { height: 4px; background: var(--accent); border-radius: 2px; width: 0; transition: width .15s; }

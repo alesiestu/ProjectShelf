@@ -33,6 +33,24 @@ function cleanKnowledgeLinks(entries) {
   return clean;
 }
 
+function cleanTodos(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((todo) => {
+    if (!todo || typeof todo !== 'object') return null;
+    const text = typeof todo.text === 'string' ? todo.text.trim() : '';
+    if (!text) return null;
+    const projectPaths = Array.isArray(todo.projectPaths)
+      ? [...new Set(todo.projectPaths.filter((path) => typeof path === 'string' && path))]
+      : [];
+    return {
+      id: typeof todo.id === 'string' && todo.id ? todo.id : 'todo-' + Date.now(),
+      text,
+      projectPaths,
+      done: todo.done === true,
+    };
+  }).filter(Boolean);
+}
+
 // txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
 // older read(buf) and wait() result shapes as fallbacks for dev runtimes.
 async function run(args, cwd) {
@@ -214,10 +232,11 @@ export const api = {
       projectColors: (await app.store.get('projectColors')) || {},
       projectRatings: (await app.store.get('projectRatings')) || {},
       projectKnowledgeLinks: cleanKnowledgeLinks(projectKnowledgeLinks),
+      todos: cleanTodos(await app.store.get('todos')),
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -240,6 +259,7 @@ export const api = {
     if (projectKnowledgeLinks && typeof projectKnowledgeLinks === 'object') {
       await app.store.set('projectKnowledgeLinks', cleanKnowledgeLinks(projectKnowledgeLinks));
     }
+    if (Array.isArray(todos)) await app.store.set('todos', cleanTodos(todos));
     return true;
   },
 
