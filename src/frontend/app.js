@@ -13,6 +13,7 @@ let prefs = { workspace: '', ignored: [] };
 let projects = [];
 let language = 'en';
 let activeFilter = 'all';
+let locationFilter = 'all';
 let knowledgePath = '';
 let knowledgeProvider = 'notion';
 let todos = [];
@@ -21,12 +22,16 @@ let todoEditingId = '';
 let gitPath = '';
 let activeTag = '';
 let mcpState = { state: 'stopped', endpoint: '', token: '' };
+let remoteWorkspaces = [];
+let remoteWorkspaceStates = [];
+let workspaceEditingId = '';
 const COLOR_OPTIONS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 
 const I18N = {
   en: {
     active: 'Active', idle: 'Idle', stale: 'Stale', cleanup: 'Cleanup',
     chooseWorkspace: 'Choose Workspace…', rescan: 'Rescan',
+    workspace: 'Workspace', remoteWorkspaces: 'Remote workspaces', addWorkspace: 'Add workspace', editWorkspace: 'Edit workspace', sshAlias: 'SSH alias', remotePath: 'Remote path', displayName: 'Display name', testConnection: 'Test connection', online: 'Online', timeout: 'Timeout', connectionError: 'Connection error', pathOrHost: 'Host or path unavailable', authentication: 'Authentication failed', malformedOutput: 'Invalid remote response', local: 'Local', ssh: 'SSH', allLocations: 'All locations', workspaceRequired: 'Enter an SSH alias and an absolute path.', workspaceTestOk: 'Connection successful', workspaceTestFailed: 'Connection failed', enabled: 'Enabled', disabled: 'Disabled',
     repos: 'Repos', totalSize: 'Total size', dirty: 'Dirty', noRemote: 'No remote', reclaimable: 'Reclaimable',
     filters: 'Filters', all: 'All',
     tag: 'Tag', addTag: '+ Tag', tagPlaceholder: 'Add tag…', removeTag: 'Remove tag',
@@ -55,6 +60,7 @@ const I18N = {
   it: {
     active: 'Attivi', idle: 'In pausa', stale: 'Invecchiati', cleanup: 'Da pulire',
     chooseWorkspace: 'Scegli workspace…', rescan: 'Scansiona',
+    workspace: 'Workspace', remoteWorkspaces: 'Workspace remoti', addWorkspace: 'Aggiungi workspace', editWorkspace: 'Modifica workspace', sshAlias: 'Alias SSH', remotePath: 'Percorso remoto', displayName: 'Nome visualizzato', testConnection: 'Test connessione', online: 'Online', timeout: 'Timeout', connectionError: 'Errore di connessione', pathOrHost: 'Host o percorso non disponibile', authentication: 'Autenticazione fallita', malformedOutput: 'Risposta remota non valida', local: 'Locale', ssh: 'SSH', allLocations: 'Tutte le posizioni', workspaceRequired: 'Inserisci un alias SSH e un percorso assoluto.', workspaceTestOk: 'Connessione riuscita', workspaceTestFailed: 'Connessione fallita', enabled: 'Attivo', disabled: 'Disattivato',
     repos: 'Repo', totalSize: 'Dimensione totale', dirty: 'Modificati', noRemote: 'Senza remote', reclaimable: 'Recuperabile',
     filters: 'Filtri', all: 'Tutti',
     tag: 'Tag', addTag: '+ Tag', tagPlaceholder: 'Aggiungi tag…', removeTag: 'Rimuovi tag',
@@ -184,8 +190,10 @@ function colorPicker(p) {
 }
 
 function card(p) {
+  const isRemoteProject = p.location === 'remote';
   const tags = [];
   const color = projectColor(p.path);
+  if (isRemoteProject) tags.push(`<span class="tag ssh-location">SSH · ${esc(p.sshAlias)}</span>`);
   if (p.dirty) tags.push(`<button class="tag dirty status-trigger" data-repo-status="${esc(p.path)}" aria-label="${esc(t('gitStatus'))}">● ${p.dirtyFiles} ${esc(t('modified'))}</button>`);
   if (!p.remote) tags.push(`<span class="tag noremote">⚠ ${esc(t('noRemote'))}</span>`);
   if (p.unpushed) tags.push(`<span class="tag unpushed">↑ ${p.unpushed} ${esc(t('unpushed'))}</span>`);
@@ -198,7 +206,7 @@ function card(p) {
 
   return `<div class="card${color ? ` project-color-${color}` : ''}">
     <div class="card-head"><h3>${esc(p.name)}</h3><div class="card-tools">${ratingControl(p)}${colorPicker(p)}</div></div>
-    <div class="meta">${esc(p.stack)} • ${esc(p.remote ? t('remote') : t('localOnly'))} • ${esc(p.branch)}</div>
+    <div class="meta">${esc(p.stack)} • ${esc(isRemoteProject ? p.workspacePath : (p.remote ? t('remote') : t('localOnly')))} • ${esc(p.branch)}</div>
     <div class="tags">${tags.join('')}${customTags.join('')}<input class="tag-input" data-tag-path="${esc(p.path)}" maxlength="50" placeholder="${esc(t('tagPlaceholder'))}" aria-label="${esc(t('addTag'))}"></div>
     <div class="row"><span>${esc(t('lastActivity'))}</span><b>${fmtAge(p.lastCommitDays)}</b></div>
     <div class="row"><span>${esc(t('size'))}</span><b>${fmtSize(p.sizeMB)}</b></div>
@@ -209,9 +217,9 @@ function card(p) {
         return `<button class="${provider}-action" data-k="${provider}">${esc(link ? t(provider) : providerText(provider, 'add'))}</button>
           ${link ? `<button data-k="${provider}-edit">${esc(providerText(provider, 'edit'))}</button>` : ''}`;
       }).join('')}
-      <button data-k="finder">${esc(t('finder'))}</button>
+      ${isRemoteProject ? '' : `<button data-k="finder">${esc(t('finder'))}</button>`}
       <button data-k="terminal">${esc(t('terminal'))}</button>
-      <button data-k="code">${esc(t('vsCode'))}</button>
+      ${isRemoteProject ? '' : `<button data-k="code">${esc(t('vsCode'))}</button>`}
       <button data-k="copy">${esc(t('copyPath'))}</button>
     </div>
   </div>`;
@@ -312,6 +320,14 @@ function render() {
     ['noRemote', t('noRemote'), projects.filter((p) => !p.remote).length],
     ['reclaimable', t('reclaimable'), projects.filter((p) => p.safeToRemove).length],
   ];
+  const locationFilters = [
+    ['all', t('allLocations'), projects.length],
+    ['local', t('local'), projects.filter((p) => p.location !== 'remote').length],
+    ['remote', t('ssh'), projects.filter((p) => p.location === 'remote').length],
+  ];
+  const locationFilterHtml = `<span class="filter-label location-filter-label">${esc(t('workspace'))}</span>` + locationFilters.map(([key, label, count]) =>
+    `<button class="filter ${locationFilter === key ? 'active' : ''}" data-location="${key}">${esc(label)} <b>${count}</b></button>`,
+  ).join('');
   const ratingThreshold = activeFilter.startsWith('rating-') ? Number(activeFilter.slice(7)) : 0;
   const ratingFilter = `<div class="priority-filter" aria-label="${esc(t('priority'))}">
     <span class="filter-label">${esc(t('priority'))}</span>
@@ -329,12 +345,14 @@ function render() {
     const count = projects.filter((project) => projectTags(project.path).some((value) => value.toLocaleLowerCase() === key)).length;
     return `<button class="filter ${activeFilter === filterKey ? 'active' : ''}" data-filter="${esc(filterKey)}">${esc(tag)} <b>${count}</b></button>`;
   }).join('');
-  $('filters').innerHTML = `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
+  $('filters').innerHTML = locationFilterHtml + `<span class="filter-label">${esc(t('filters'))}</span>` + filters.map(([key, label, count]) =>
     `<button class="filter ${activeFilter === key ? 'active' : ''}" data-filter="${key}">${esc(label)} <b>${count}</b></button>`,
   ).join('') + ratingFilter + (tagFilters ? `<span class="filter-label tag-filter-label">${esc(t('tag'))}</span>${tagFilters}` : '');
   renderTodos();
 
   const visibleProjects = projects.filter((p) => {
+    if (locationFilter === 'local' && p.location === 'remote') return false;
+    if (locationFilter === 'remote' && p.location !== 'remote') return false;
     if (activeFilter === 'dirty') return p.dirty;
     if (activeFilter === 'noRemote') return !p.remote;
     if (activeFilter === 'reclaimable') return p.safeToRemove;
@@ -363,6 +381,7 @@ async function scan() {
   try {
     const res = await tiny.api.call('scan', { root: prefs.workspace, ignored: prefs.ignored });
     projects = res.projects;
+    remoteWorkspaceStates = res.remoteWorkspaces || [];
     render();
   } catch (e) {
     $('board').innerHTML = `<div class="empty">${esc(t('scanFailed', { error: e }))}</div>`;
@@ -377,6 +396,76 @@ tiny.api.on('scan-progress', ({ done, total }) => {
   $('fill').style.width = (total ? (done / total) * 200 : 0) + 'px';
   $('barText').textContent = `${done} / ${total}`;
 });
+tiny.api.on('scan-remote-progress', ({ done, total, state }) => {
+  $('fill').style.width = (total ? (done / total) * 200 : 0) + 'px';
+  $('barText').textContent = `${done} / ${total} SSH · ${state}`;
+});
+
+function workspaceStateLabel(state) {
+  if (state === 'online') return t('online');
+  if (state === 'timeout') return t('timeout');
+  return t('connectionError');
+}
+
+function renderWorkspaceList() {
+  $('workspaceList').innerHTML = remoteWorkspaces.length ? remoteWorkspaces.map((workspace) => {
+    const status = remoteWorkspaceStates.find((item) => item.id === workspace.id);
+    return `<div class="workspace-row ${workspace.enabled ? '' : 'disabled'}">
+      <div class="workspace-row-main"><b>${esc(workspace.name)}</b><span>${esc(workspace.alias)} · ${esc(workspace.path)}</span>${status ? `<em class="workspace-state ${status.connectionState}">${esc(workspaceStateLabel(status.connectionState))}</em>` : ''}</div>
+      <button type="button" data-workspace-toggle="${esc(workspace.id)}">${esc(workspace.enabled ? t('enabled') : t('disabled'))}</button>
+      <button type="button" data-workspace-edit="${esc(workspace.id)}">${esc(t('editWorkspace'))}</button>
+    </div>`;
+  }).join('') : `<div class="todo-empty">${esc(t('noProjects'))}</div>`;
+}
+
+function resetWorkspaceForm() {
+  workspaceEditingId = '';
+  $('workspaceFormTitle').textContent = t('addWorkspace');
+  $('workspaceAlias').value = '';
+  $('workspacePath').value = '';
+  $('workspaceName').value = '';
+  $('workspaceError').textContent = '';
+  $('workspaceRemove').hidden = true;
+}
+
+function openWorkspaceDialog(id = '') {
+  workspaceEditingId = id;
+  const workspace = remoteWorkspaces.find((item) => item.id === id);
+  $('workspaceFormTitle').textContent = workspace ? t('editWorkspace') : t('addWorkspace');
+  $('workspaceAlias').value = workspace?.alias || '';
+  $('workspacePath').value = workspace?.path || '';
+  $('workspaceName').value = workspace?.name || '';
+  $('workspaceError').textContent = '';
+  $('workspaceRemove').hidden = !workspace;
+  $('workspaceDialog').showModal();
+  $('workspaceAlias').focus();
+}
+
+function workspaceFormValue() {
+  const alias = $('workspaceAlias').value.trim();
+  const path = $('workspacePath').value.trim();
+  if (!alias || !path.startsWith('/')) throw new Error(t('workspaceRequired'));
+  return { alias, path, name: $('workspaceName').value.trim(), enabled: true };
+}
+
+function workspaceId(value) {
+  return `remote-${value.alias}-${value.path.replace(/^\/+|\/+$/g, '').replace(/[^A-Za-z0-9._-]+/g, '-') || 'root'}`;
+}
+
+async function saveWorkspaceForm() {
+  try {
+    const value = workspaceFormValue();
+    if (workspaceEditingId) {
+      const old = remoteWorkspaces.find((item) => item.id === workspaceEditingId);
+      remoteWorkspaces = remoteWorkspaces.map((item) => item.id === workspaceEditingId ? { ...value, id: workspaceId(value), enabled: old?.enabled !== false } : item);
+    } else remoteWorkspaces = [...remoteWorkspaces, { ...value, id: workspaceId(value) }];
+    await tiny.api.call('savePrefs', { remoteWorkspaces });
+    prefs.remoteWorkspaces = remoteWorkspaces;
+    $('workspaceDialog').close();
+    renderWorkspaceList();
+    await scan();
+  } catch (error) { $('workspaceError').textContent = error.message || t('workspaceRequired'); }
+}
 
 async function pick() {
   const path = await tiny.dialog.pickFolder();
@@ -416,6 +505,39 @@ async function copyMcpField(id, buttonId) {
 
 $('pick').addEventListener('click', pick);
 $('rescan').addEventListener('click', scan);
+$('workspaceOpen').addEventListener('click', () => {
+  renderWorkspaceList();
+  resetWorkspaceForm();
+  $('workspaceDialog').showModal();
+});
+$('workspaceClose').addEventListener('click', () => $('workspaceDialog').close());
+$('workspaceCancel').addEventListener('click', () => $('workspaceDialog').close());
+$('workspaceNew').addEventListener('click', resetWorkspaceForm);
+$('workspaceForm').addEventListener('submit', async (ev) => { ev.preventDefault(); await saveWorkspaceForm(); });
+$('workspaceList').addEventListener('click', async (ev) => {
+  const edit = ev.target.closest('[data-workspace-edit]');
+  if (edit) { openWorkspaceDialog(edit.dataset.workspaceEdit); return; }
+  const toggle = ev.target.closest('[data-workspace-toggle]');
+  if (!toggle) return;
+  remoteWorkspaces = remoteWorkspaces.map((item) => item.id === toggle.dataset.workspaceToggle ? { ...item, enabled: !item.enabled } : item);
+  prefs.remoteWorkspaces = remoteWorkspaces;
+  await tiny.api.call('savePrefs', { remoteWorkspaces });
+  renderWorkspaceList();
+});
+$('workspaceRemove').addEventListener('click', async () => {
+  if (!workspaceEditingId) return;
+  remoteWorkspaces = remoteWorkspaces.filter((item) => item.id !== workspaceEditingId);
+  prefs.remoteWorkspaces = remoteWorkspaces;
+  await tiny.api.call('savePrefs', { remoteWorkspaces });
+  renderWorkspaceList();
+  resetWorkspaceForm();
+});
+$('workspaceTest').addEventListener('click', async () => {
+  try {
+    const result = await tiny.api.call('testRemoteWorkspace', { workspace: workspaceFormValue() });
+    $('workspaceError').textContent = result.connectionState === 'online' ? t('workspaceTestOk') : `${t('workspaceTestFailed')}: ${result.errorMessage || result.connectionState}`;
+  } catch (error) { $('workspaceError').textContent = error.message || t('workspaceTestFailed'); }
+});
 $('mcpOpen').addEventListener('click', async () => {
   $('mcpDialog').showModal();
   await refreshMcpDialog();
@@ -441,6 +563,12 @@ $('mcpReveal').addEventListener('click', () => {
 $('mcpCopyConfig').addEventListener('click', () => copyMcpField('mcpConfig', 'mcpCopyConfig'));
 $('mcpCopyPrompt').addEventListener('click', () => copyMcpField('mcpPrompt', 'mcpCopyPrompt'));
 $('filters').addEventListener('click', (ev) => {
+  const location = ev.target.closest('[data-location]');
+  if (location) {
+    locationFilter = location.dataset.location;
+    render();
+    return;
+  }
   const btn = ev.target.closest('[data-filter]');
   if (!btn) return;
   activeFilter = btn.dataset.filter;
@@ -544,6 +672,16 @@ function applyLanguage() {
   $('language').setAttribute('aria-label', t('changeLanguage'));
   $('pick').textContent = t('chooseWorkspace');
   $('rescan').textContent = t('rescan');
+  $('workspaceOpen').textContent = t('workspace');
+  $('workspaceTitle').textContent = t('remoteWorkspaces');
+  $('workspaceFormTitle').textContent = workspaceEditingId ? t('editWorkspace') : t('addWorkspace');
+  $('workspaceAliasLabel').textContent = t('sshAlias');
+  $('workspacePathLabel').textContent = t('remotePath');
+  $('workspaceNameLabel').textContent = t('displayName');
+  $('workspaceTest').textContent = t('testConnection');
+  $('workspaceCancel').textContent = t('cancel');
+  $('workspaceRemove').textContent = t('remove');
+  $('workspaceSave').textContent = t('save');
   $('mcpOpen').textContent = t('mcp');
   $('mcpTitle').textContent = t('mcpTitle');
   $('mcpDescription').textContent = t('mcpDescription');
@@ -658,6 +796,11 @@ $('board').addEventListener('click', async (ev) => {
     setTimeout(() => { btn.textContent = old; }, 900);
     return;
   }
+  const project = projects.find((item) => item.path === path);
+  if (kind === 'terminal' && project?.location === 'remote') {
+    await tiny.api.call('openRemoteTerminal', { alias: project.sshAlias, path: project.remotePath });
+    return;
+  }
   await tiny.api.call('openIn', { path, kind });
 });
 
@@ -667,6 +810,8 @@ $('board').addEventListener('click', async (ev) => {
   prefs.projectRatings = prefs.projectRatings || {};
   prefs.projectKnowledgeLinks = prefs.projectKnowledgeLinks || {};
   prefs.projectTags = prefs.projectTags || {};
+  prefs.remoteWorkspaces = Array.isArray(prefs.remoteWorkspaces) ? prefs.remoteWorkspaces : [];
+  remoteWorkspaces = prefs.remoteWorkspaces;
   todos = Array.isArray(prefs.todos) ? prefs.todos : [];
   language = prefs.language || ((navigator.language || '').toLowerCase().startsWith('it') ? 'it' : 'en');
   applyLanguage();

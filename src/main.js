@@ -1,6 +1,15 @@
 // ProjectShelf backend — scans a workspace for git repos and classifies them.
 // Everything privileged lives here; the page only renders and calls tiny.api.
 
+import {
+  buildRemoteScanCommand,
+  classifyRemoteFailure,
+  normalizeRemoteWorkspace,
+  normalizeRemoteWorkspaces,
+  parseRemoteScanOutput,
+  shellQuote,
+} from './remote-workspaces.js';
+
 const dec = new TextDecoder();
 const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
@@ -9,6 +18,7 @@ const MCP_STATE_PATH = tjs.homeDir + '/.projectshelf/mcp-state.json';
 const MCP_SERVER_PATH = tjs.cwd + '/mcp/server.mjs';
 let mcpProcess;
 let mcpInfo = { state: 'stopped', endpoint: '', port: 0, token: '', error: '' };
+const remoteWorkspaceCache = new Map();
 
 function linkProtocol(value) {
   try {
@@ -122,6 +132,48 @@ async function run(args, cwd) {
   if (!out && st && typeof st.stdout === 'string') out = st.stdout;
   const code = st ? (st.exit_status ?? st.exitCode ?? st.exit_code ?? 0) : 0;
   return { out: out.trim(), code };
+}
+
+async function readProcessStream(stream) {
+  if (!stream?.getReader) return '';
+  const reader = stream.getReader();
+  let output = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    output += dec.decode(value, { stream: true });
+  }
+  return output + dec.decode();
+}
+
+async function runRemote(args, timeoutMs = 60000) {
+  let proc;
+  try {
+    proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
+  } catch (error) {
+    return { code: -1, out: '', err: error?.message || 'Unable to start SSH.', timedOut: false };
+  }
+  const output = Promise.all([readProcessStream(proc.stdout), readProcessStream(proc.stderr)]);
+  let timedOut = false;
+  let timer;
+  const wait = proc.wait().then((status) => ({ status, output }));
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      try { proc.kill?.(); } catch {}
+      resolve({ status: null, output });
+    }, timeoutMs);
+  });
+  const result = await Promise.race([wait, timeout]);
+  clearTimeout(timer);
+  const [out, err] = await result.output;
+  const status = result.status;
+  return {
+    code: status ? (status.exit_status ?? status.exitCode ?? status.exit_code ?? 0) : -1,
+    out: out.trim(),
+    err: err.trim(),
+    timedOut,
+  };
 }
 
 const git = (dir, ...args) => run(['git', '-C', dir, ...args]);
@@ -247,6 +299,70 @@ function classify(days) {
   return 'cleanup';
 }
 
+function decorateRemoteProject(project) {
+  const reasons = [];
+  const reasonKeys = [];
+  if (!project.remote) { reasons.push('no remote'); reasonKeys.push('noRemote'); }
+  if (project.dirtyFiles) {
+    reasons.push(project.dirtyFiles + ' modified file' + (project.dirtyFiles > 1 ? 's' : ''));
+    reasonKeys.push('modifiedFiles');
+  }
+  if (project.unpushed) {
+    reasons.push(project.unpushed + ' unpushed commit' + (project.unpushed > 1 ? 's' : ''));
+    reasonKeys.push('unpushedCommits');
+  }
+  if (project.lastCommitDays == null || project.lastCommitDays <= 180) {
+    reasons.push('newer than 180 days'); reasonKeys.push('tooRecent');
+  }
+  return {
+    ...project,
+    status: classify(project.lastCommitDays == null ? 9999 : project.lastCommitDays),
+    safeToRemove: reasons.length === 0,
+    reasons,
+    reasonKeys,
+  };
+}
+
+async function scanRemoteWorkspace(workspace) {
+  const args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', workspace.alias, buildRemoteScanCommand(workspace)];
+  const result = await runRemote(args, 60000);
+  if (result.code !== 0 || result.timedOut) {
+    const failure = classifyRemoteFailure(result);
+    const previous = remoteWorkspaceCache.get(workspace.id);
+    return {
+      ...workspace,
+      ...failure,
+      projects: previous?.projects || [],
+      retained: Boolean(previous),
+    };
+  }
+  try {
+    const parsed = parseRemoteScanOutput(result.out, workspace);
+    const current = { ...parsed, projects: parsed.projects.map(decorateRemoteProject) };
+    remoteWorkspaceCache.set(workspace.id, current);
+    return current;
+  } catch (error) {
+    const previous = remoteWorkspaceCache.get(workspace.id);
+    return {
+      ...workspace,
+      connectionState: 'error',
+      errorKind: 'malformed-output',
+      errorMessage: 'Remote scan returned invalid data.',
+      projects: previous?.projects || [],
+      retained: Boolean(previous),
+    };
+  }
+}
+
+function parseRemoteProjectKey(path) {
+  const match = typeof path === 'string' ? path.match(/^ssh:\/\/([^/]+)(\/.*)$/) : null;
+  return match ? { alias: match[1], path: match[2] } : null;
+}
+
+function remoteGitArgs(alias, command) {
+  return ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', alias, command];
+}
+
 async function scanProject(path) {
   const name = path.split('/').filter(Boolean).pop();
 
@@ -350,10 +466,11 @@ export const api = {
       projectKnowledgeLinks: cleanKnowledgeLinks(projectKnowledgeLinks),
       todos: cleanTodos(await app.store.get('todos')),
       projectTags: cleanProjectTags(await app.store.get('projectTags')),
+      remoteWorkspaces: normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces')),
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags }, app) {
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags, remoteWorkspaces }, app) {
     if (workspace) await app.store.set('workspace', workspace);
     if (ignored) await app.store.set('ignored', ignored);
     if (language === 'it' || language === 'en') await app.store.set('language', language);
@@ -378,6 +495,7 @@ export const api = {
     }
     if (Array.isArray(todos)) await app.store.set('todos', cleanTodos(todos));
     if (projectTags && typeof projectTags === 'object') await app.store.set('projectTags', cleanProjectTags(projectTags));
+    if (remoteWorkspaces) await app.store.set('remoteWorkspaces', normalizeRemoteWorkspaces(remoteWorkspaces));
     await syncPrefsToMcp({ projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags });
     return true;
   },
@@ -386,7 +504,10 @@ export const api = {
     const found = [];
     await findRepos(root, ignored, depth, found);
     found.sort();
-    app.push('scan-start', { total: found.length });
+    const remoteWorkspaces = normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces'))
+      .filter((workspace) => workspace.enabled);
+    const totalWorkspaces = (found.length ? 1 : 0) + remoteWorkspaces.length;
+    app.push('scan-start', { total: found.length, workspaces: totalWorkspaces });
 
     const projects = [];
     for (let i = 0; i < found.length; i++) {
@@ -397,10 +518,32 @@ export const api = {
       }
       app.push('scan-progress', { done: i + 1, total: found.length });
     }
+    const remoteResults = await Promise.all(remoteWorkspaces.map(async (workspace, index) => {
+      const result = await scanRemoteWorkspace(workspace);
+      app.push('scan-remote-progress', { workspaceId: workspace.id, done: index + 1, total: remoteWorkspaces.length, state: result.connectionState });
+      return result;
+    }));
+    for (const result of remoteResults) projects.push(...result.projects);
     if (mcpInfo.state === 'running') {
       try { await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify(projects) }); } catch {}
     }
-    return { root, projects };
+    return { root, projects, remoteWorkspaces: remoteResults };
+  },
+
+  async testRemoteWorkspace({ workspace }) {
+    const [normalized] = normalizeRemoteWorkspaces([workspace]);
+    if (!normalized) return { connectionState: 'error', errorKind: 'invalid', errorMessage: 'Invalid remote workspace.' };
+    return scanRemoteWorkspace(normalized);
+  },
+
+  async openRemoteTerminal({ alias, path }, app) {
+    const workspaces = normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces'));
+    const workspace = workspaces.find((item) => item.alias === alias && path.startsWith(item.path + '/'));
+    if (!workspace) return false;
+    const remotePath = path.replace(/\/$/, '');
+    const command = `ssh -o BatchMode=yes ${shellQuote(alias)} -t "cd -- ${shellQuote(remotePath)} && exec \$SHELL"`;
+    const appleScript = `tell application "Terminal" to do script ${JSON.stringify(command)}`;
+    return (await run(['osascript', '-e', appleScript])).code === 0;
   },
 
   async mcpStatus() {
@@ -491,6 +634,24 @@ export const api = {
   },
 
   async repoStatus({ path }) {
+    const remote = parseRemoteProjectKey(path);
+    if (remote) {
+      const result = await runRemote(remoteGitArgs(remote.alias, `git -C ${shellQuote(remote.path)} status --short --branch`), 60000);
+      if (result.code !== 0 || result.timedOut) return { error: classifyRemoteFailure(result).errorMessage };
+      const parsed = parseGitStatus(result.out);
+      return {
+        path,
+        branch: parsed.branchLine.replace(/^##\s*/, '') || '(detached)',
+        remote: '',
+        commit: null,
+        files: parsed.files,
+        counts: {
+          total: parsed.files.length,
+          staged: parsed.files.filter((file) => file.staged).length,
+          unstaged: parsed.files.filter((file) => file.unstaged).length,
+        },
+      };
+    }
     const [status, branch, remote, commit] = await Promise.all([
       git(path, 'status', '--short', '--branch'),
       git(path, 'branch', '--show-current'),
@@ -516,6 +677,13 @@ export const api = {
 
   async repoDiff({ path, file }) {
     if (!path || !file) return { diff: '', available: false };
+    const remote = parseRemoteProjectKey(path);
+    if (remote) {
+      if (file.includes('\0') || file.includes('..')) return { diff: '', available: false };
+      const command = `git -C ${shellQuote(remote.path)} diff --no-ext-diff -- ${shellQuote(file)}`;
+      const result = await runRemote(remoteGitArgs(remote.alias, command), 60000);
+      return { file, diff: result.out, available: Boolean(result.out), error: result.code === 0 ? '' : classifyRemoteFailure(result).errorMessage };
+    }
     const [unstaged, staged] = await Promise.all([
       git(path, 'diff', '--no-ext-diff', '--', file),
       git(path, 'diff', '--no-ext-diff', '--cached', '--', file),

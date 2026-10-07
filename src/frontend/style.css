@@ -35,6 +35,7 @@ button:hover { border-color: var(--dim); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .language { min-width: 34px; padding-left: 7px; padding-right: 7px; font-size: 11px; font-weight: 650; }
 .mcp-button { font-size: 11px; font-weight: 650; }
+.workspace-button { font-size: 11px; }
 
 .stats { display: flex; gap: 8px; padding: 12px 16px 0; flex-wrap: wrap; }
 .stat {
@@ -120,6 +121,24 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .mcp-dialog textarea { resize: vertical; white-space: pre-wrap; }
 .mcp-actions { flex-wrap: wrap; }
 .mcp-dialog form > button { justify-self: start; }
+
+.workspace-dialog { width: min(660px, calc(100vw - 32px)); }
+.workspace-dialog form { display: grid; gap: 7px; padding: 18px; }
+.workspace-dialog h2 { margin: 0 0 3px; font-size: 16px; }
+.workspace-list { display: grid; gap: 5px; max-height: 190px; overflow: auto; margin: 2px 0 6px; }
+.workspace-row { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel2); }
+.workspace-row.disabled { opacity: .55; }
+.workspace-row-main { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.workspace-row-main b, .workspace-row-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-row-main span { color: var(--dim); font: 10px ui-monospace, Menlo, monospace; }
+.workspace-row-main em { font-size: 10px; font-style: normal; }
+.workspace-state.online { color: var(--active); }
+.workspace-state.timeout, .workspace-state.error { color: var(--cleanup); }
+.workspace-row > button { padding: 3px 7px; font-size: 10px; }
+.workspace-form-head { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.workspace-form-head button { padding: 1px 7px; }
+.ssh-location { color: #bc8cff; border-color: color-mix(in srgb, #bc8cff 45%, var(--line)); }
+.location-filter-label { margin-left: 4px; }
 
 .bar { display: none; padding: 10px 16px 0; align-items: center; gap: 8px; }
 .bar.on { display: flex; }

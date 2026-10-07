@@ -14,6 +14,14 @@ Scegli una cartella e ProjectShelf cerca i progetti al suo interno. Per ogni rep
 
 Sono disponibili anche filtri per vedere solo i progetti modificati, senza remote o recuperabili, oltre a pulsanti per aprire un progetto in Finder, Terminale o VS Code.
 
+## Workspace remoti via SSH
+
+Puoi aggiungere workspace presenti su VM o server raggiunti via SSH senza montare il filesystem. Apri `Workspace`, inserisci un alias già configurato in `~/.ssh/config` e un percorso remoto assoluto, poi premi `Rescan`.
+
+La scansione aggiorna tutti i workspace locali e remoti abilitati. Ogni workspace SSH ha un timeout massimo di 60 secondi e viene mostrato con un badge `SSH` e l'alias dell'host. I progetti remoti supportano colori, stelle, tag, link Notion/Obsidian, Todo, Terminale e stato/diff Git in sola lettura. Finder e VS Code locale restano disponibili solo per i progetti locali.
+
+ProjectShelf usa il client OpenSSH di sistema in modalità non interattiva (`BatchMode`) e non salva password, chiavi private o credenziali. Non vengono eseguiti comandi SSH arbitrari: i comandi di scansione e Git sono predefiniti e read-only.
+
 ## MCP locale per Codex
 
 ProjectShelf include un piccolo server MCP locale. Apri il pulsante `MCP` nella barra superiore per avviare il servizio e copiare:

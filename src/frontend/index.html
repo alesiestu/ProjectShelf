@@ -12,6 +12,7 @@
   <div class="ws" id="ws">—</div>
   <div class="spacer"></div>
   <button id="language" class="language" aria-label="Change language">IT</button>
+  <button id="workspaceOpen" class="workspace-button">Workspace</button>
   <button id="mcpOpen" class="mcp-button">MCP</button>
   <button id="pick">Choose Workspace…</button>
   <button id="rescan" class="primary">Rescan</button>
@@ -103,6 +104,28 @@
     <label id="mcpPromptLabel" for="mcpPrompt">Installation prompt</label>
     <textarea id="mcpPrompt" readonly rows="7"></textarea>
     <button type="button" id="mcpCopyPrompt">Copy prompt</button>
+  </form>
+</dialog>
+
+<dialog id="workspaceDialog" class="notion-dialog workspace-dialog">
+  <form method="dialog" id="workspaceForm">
+    <div class="git-dialog-head"><h2 id="workspaceTitle">Remote workspaces</h2><button type="button" id="workspaceClose">×</button></div>
+    <div id="workspaceList" class="workspace-list"></div>
+    <div class="workspace-form-head"><b id="workspaceFormTitle">Add workspace</b><button type="button" id="workspaceNew">+</button></div>
+    <label id="workspaceAliasLabel" for="workspaceAlias">SSH alias</label>
+    <input id="workspaceAlias" autocomplete="off" spellcheck="false" placeholder="dev-vm">
+    <label id="workspacePathLabel" for="workspacePath">Remote path</label>
+    <input id="workspacePath" autocomplete="off" spellcheck="false" placeholder="/home/user/workspace">
+    <label id="workspaceNameLabel" for="workspaceName">Display name</label>
+    <input id="workspaceName" autocomplete="off" maxlength="80" placeholder="Dev VM">
+    <p id="workspaceError" class="notion-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="workspaceRemove" class="danger">Remove</button>
+      <button type="button" id="workspaceTest">Test connection</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" id="workspaceCancel">Cancel</button>
+      <button type="submit" id="workspaceSave" class="primary">Save</button>
+    </div>
   </form>
 </dialog>
 
