@@ -8,14 +8,19 @@ import {
   normalizeRemoteWorkspaces,
   parseRemoteScanOutput,
   shellQuote,
+  sshIdentityFile,
+  sshTarget,
 } from './remote-workspaces.js';
+import { BACKUP_KEYS, discoverRepos, mergeBackup, normalizeContext, normalizeContexts, parseBackup, persistPreference } from './project-context.js';
 
 const dec = new TextDecoder();
 const DAY = 86400000;
 const PROJECT_COLORS = new Set(['blue', 'green', 'yellow', 'orange', 'red', 'purple']);
 const MAX_PROJECT_RATING = 5;
 const MCP_STATE_PATH = tjs.homeDir + '/.projectshelf/mcp-state.json';
-const MCP_SERVER_PATH = tjs.cwd + '/mcp/server.mjs';
+const APP_ROOT = decodeURIComponent(new URL('../', import.meta.url).pathname).replace(/\/$/, '').replace(/\/\.build\/app$/, '');
+const MCP_SERVER_PATH = APP_ROOT + '/mcp/server.mjs';
+let scannedProjects = [];
 let mcpProcess;
 let mcpInfo = { state: 'stopped', endpoint: '', port: 0, token: '', error: '' };
 const remoteWorkspaceCache = new Map();
@@ -102,71 +107,45 @@ function parseGitStatus(output) {
   return { branchLine, files };
 }
 
-// txiki.js spawn: current runtimes expose a Web Streams reader. Keep the
-// older read(buf) and wait() result shapes as fallbacks for dev runtimes.
+// Bound both process completion and stream reads; SSH cannot hold the UI forever.
 async function run(args, cwd) {
-  let proc;
-  try {
-    proc = tjs.spawn(args, { cwd, stdout: 'pipe', stderr: 'ignore' });
-  } catch (e) {
-    return { out: '', code: -1 };
-  }
-  let out = '';
-  if (proc.stdout && typeof proc.stdout.getReader === 'function') {
-    const reader = proc.stdout.getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) out += dec.decode(value, { stream: true });
-    }
-    out += dec.decode();
-  } else if (proc.stdout && typeof proc.stdout.read === 'function') {
-    const buf = new Uint8Array(1 << 16);
-    for (;;) {
-      const n = await proc.stdout.read(buf);
-      if (!n) break;
-      out += dec.decode(buf.subarray(0, n));
-    }
-  }
-  const st = await proc.wait();
-  if (!out && st && typeof st.stdout === 'string') out = st.stdout;
-  const code = st ? (st.exit_status ?? st.exitCode ?? st.exit_code ?? 0) : 0;
-  return { out: out.trim(), code };
+  return runRemote(args, 60000, cwd);
 }
 
 async function readProcessStream(stream) {
+  const decoder = new TextDecoder();
   if (!stream?.getReader) return '';
   const reader = stream.getReader();
   let output = '';
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
-    output += dec.decode(value, { stream: true });
+    output += decoder.decode(value, { stream: true });
   }
-  return output + dec.decode();
+  return output + decoder.decode();
 }
 
-async function runRemote(args, timeoutMs = 60000) {
+async function runRemote(args, timeoutMs = 60000, cwd) {
   let proc;
   try {
-    proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
+    proc = tjs.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });
   } catch (error) {
     return { code: -1, out: '', err: error?.message || 'Unable to start SSH.', timedOut: false };
   }
   const output = Promise.all([readProcessStream(proc.stdout), readProcessStream(proc.stderr)]);
   let timedOut = false;
   let timer;
-  const wait = proc.wait().then((status) => ({ status, output }));
+  const wait = Promise.all([proc.wait(), output]).then(([status, streams]) => ({ status, streams }));
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => {
       timedOut = true;
       try { proc.kill?.(); } catch {}
-      resolve({ status: null, output });
+      resolve({ status: null, streams: ['', 'Operation timed out.'] });
     }, timeoutMs);
   });
   const result = await Promise.race([wait, timeout]);
   clearTimeout(timer);
-  const [out, err] = await result.output;
+  const [out, err] = result.streams;
   const status = result.status;
   return {
     code: status ? (status.exit_status ?? status.exitCode ?? status.exit_code ?? 0) : -1,
@@ -189,13 +168,18 @@ async function readJsonFile(path, fallback = null) {
 async function mcpFetch(path, options = {}) {
   if (!mcpInfo.endpoint || !mcpInfo.token) throw new Error('MCP service is not running.');
   const base = mcpInfo.endpoint.replace(/\/mcp$/, '');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
   const response = await fetch(base + path, {
     ...options,
+    signal: controller.signal,
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + mcpInfo.token, ...(options.headers || {}) },
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'MCP service request failed.');
   return body;
+  } finally { clearTimeout(timeout); }
 }
 
 async function refreshMcpInfo() {
@@ -206,7 +190,7 @@ async function refreshMcpInfo() {
 
 async function mcpMigration(app) {
   const prefs = {};
-  for (const key of ['projectColors', 'projectRatings', 'projectKnowledgeLinks', 'projectNotionLinks', 'projectTags', 'todos']) {
+  for (const key of ['projectColors', 'projectRatings', 'projectKnowledgeLinks', 'projectNotionLinks', 'projectTags', 'projectContexts', 'todos']) {
     prefs[key] = await app.store.get(key);
   }
   return prefs;
@@ -214,15 +198,15 @@ async function mcpMigration(app) {
 
 async function syncPrefsToMcp(payload) {
   if (mcpInfo.state !== 'running') return;
-  try { await mcpFetch('/app/state', { method: 'POST', body: JSON.stringify(payload) }); } catch {}
+  await mcpFetch('/app/state', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 async function findNode() {
   const candidates = [
+    APP_ROOT + '/runtime/node',
     '/opt/homebrew/bin/node',
     '/usr/local/bin/node',
     '/usr/bin/node',
-    '/Users/alessandro/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node',
   ];
   for (const candidate of candidates) if (await exists(candidate)) return candidate;
   return '';
@@ -293,6 +277,7 @@ async function sizeMB(dir) {
 }
 
 function classify(days) {
+  if (days == null) return 'unknown';
   if (days < 30) return 'active';
   if (days < 90) return 'idle';
   if (days < 180) return 'stale';
@@ -311,12 +296,14 @@ function decorateRemoteProject(project) {
     reasons.push(project.unpushed + ' unpushed commit' + (project.unpushed > 1 ? 's' : ''));
     reasonKeys.push('unpushedCommits');
   }
-  if (project.lastCommitDays == null || project.lastCommitDays <= 180) {
+  if (project.remote && !project.tracked) { reasons.push('no upstream'); reasonKeys.push('noTracking'); }
+  if (project.lastCommitDays == null) { reasons.push('commit date unavailable'); reasonKeys.push('unknownCommit'); }
+  else if (project.lastCommitDays < 180) {
     reasons.push('newer than 180 days'); reasonKeys.push('tooRecent');
   }
   return {
     ...project,
-    status: classify(project.lastCommitDays == null ? 9999 : project.lastCommitDays),
+    status: classify(project.lastCommitDays),
     safeToRemove: reasons.length === 0,
     reasons,
     reasonKeys,
@@ -324,7 +311,7 @@ function decorateRemoteProject(project) {
 }
 
 async function scanRemoteWorkspace(workspace) {
-  const args = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', workspace.alias, buildRemoteScanCommand(workspace)];
+  const args = ['ssh', '-i', resolveIdentityFile(sshIdentityFile(workspace)), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', sshTarget(workspace), buildRemoteScanCommand(workspace)];
   const result = await runRemote(args, 60000);
   if (result.code !== 0 || result.timedOut) {
     const failure = classifyRemoteFailure(result);
@@ -359,8 +346,21 @@ function parseRemoteProjectKey(path) {
   return match ? { alias: match[1], path: match[2] } : null;
 }
 
-function remoteGitArgs(alias, command) {
-  return ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', alias, command];
+function resolveIdentityFile(identityFile) {
+  const value = String(identityFile || '~/.ssh/id_rsa');
+  return value.startsWith('~/') ? tjs.homeDir + value.slice(1) : value;
+}
+
+function remoteGitArgs(workspace, command) {
+  return ['ssh', '-i', resolveIdentityFile(sshIdentityFile(workspace)), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', sshTarget(workspace), command];
+}
+
+function workspaceFromProjectTarget(target, path, extra = {}) {
+  const value = String(target || '');
+  const split = value.lastIndexOf('@');
+  const user = split > 0 ? value.slice(0, split) : '';
+  const host = split > 0 ? value.slice(split + 1) : value;
+  return normalizeRemoteWorkspace({ host, user, path: '/', ...extra });
 }
 
 async function scanProject(path) {
@@ -376,10 +376,10 @@ async function scanProject(path) {
   ]);
 
   const ts = parseInt(commit.out, 10);
-  const hasCommits = Number.isFinite(ts);
+  const hasCommits = Number.isFinite(ts) && ts > 0;
   const lastCommitDays = hasCommits
-    ? Math.floor((Date.now() - ts * 1000) / DAY)
-    : 9999;
+    ? Math.max(0, Math.floor((Date.now() - ts * 1000) / DAY))
+    : null;
 
   const dirtyFiles = status.out ? status.out.split('\n').length : 0;
   const hasRemote = remote.code === 0 && !!remote.out;
@@ -396,6 +396,7 @@ async function scanProject(path) {
 
   const reasons = [];
   const reasonKeys = [];
+  if (status.code !== 0 || status.timedOut || branch.code !== 0) { reasons.push('Git checks failed'); reasonKeys.push('gitUnavailable'); }
   if (!hasRemote) { reasons.push('no remote'); reasonKeys.push('noRemote'); }
   if (dirtyFiles) {
     reasons.push(dirtyFiles + ' modified file' + (dirtyFiles > 1 ? 's' : ''));
@@ -408,7 +409,8 @@ async function scanProject(path) {
   if (hasRemote && !tracked) {
     reasons.push('branch not tracking a remote'); reasonKeys.push('noTracking');
   }
-  if (lastCommitDays <= 180) {
+  if (lastCommitDays == null) { reasons.push('commit date unavailable'); reasonKeys.push('unknownCommit'); }
+  else if (lastCommitDays < 180) {
     reasons.push('newer than 180 days'); reasonKeys.push('tooRecent');
   }
 
@@ -434,18 +436,7 @@ async function scanProject(path) {
 // Walk the workspace. A directory containing .git is a project and is not
 // descended into; otherwise we go `depth` levels deep looking for nested ones.
 async function findRepos(root, ignored, depth, found) {
-  if (depth < 0 || found.length >= 400) return;
-  let iter;
-  try { iter = await tjs.readDir(root); } catch { return; }
-  const subdirs = [];
-  for await (const e of iter) {
-    if (!e.isDirectory) continue;
-    if (e.name.startsWith('.') && e.name !== '.git') continue;
-    if (ignored.includes(e.name)) continue;
-    if (e.name === '.git') { found.push(root); return; }
-    subdirs.push(root.replace(/\/$/, '') + '/' + e.name);
-  }
-  for (const d of subdirs) await findRepos(d, ignored, depth - 1, found);
+  return discoverRepos(root, ignored, depth, found, { readDir: tjs.readDir });
 }
 
 export const api = {
@@ -466,20 +457,22 @@ export const api = {
       projectKnowledgeLinks: cleanKnowledgeLinks(projectKnowledgeLinks),
       todos: cleanTodos(await app.store.get('todos')),
       projectTags: cleanProjectTags(await app.store.get('projectTags')),
+      projectContexts: normalizeContexts(await app.store.get('projectContexts')),
       remoteWorkspaces: normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces')),
     };
   },
 
-  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags, remoteWorkspaces }, app) {
-    if (workspace) await app.store.set('workspace', workspace);
-    if (ignored) await app.store.set('ignored', ignored);
-    if (language === 'it' || language === 'en') await app.store.set('language', language);
+  async savePrefs({ workspace, ignored, language, projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags, projectContexts, remoteWorkspaces }, app) {
+    const set = (key, value) => persistPreference(app.store, key, value);
+    if (workspace) await set('workspace', workspace);
+    if (ignored) await set('ignored', ignored);
+    if (language === 'it' || language === 'en') await set('language', language);
     if (projectColors && typeof projectColors === 'object') {
       const cleanColors = {};
       for (const [path, color] of Object.entries(projectColors)) {
         if (typeof path === 'string' && PROJECT_COLORS.has(color)) cleanColors[path] = color;
       }
-      await app.store.set('projectColors', cleanColors);
+      await set('projectColors', cleanColors);
     }
     if (projectRatings && typeof projectRatings === 'object') {
       const cleanRatings = {};
@@ -488,15 +481,16 @@ export const api = {
           cleanRatings[path] = rating;
         }
       }
-      await app.store.set('projectRatings', cleanRatings);
+      await set('projectRatings', cleanRatings);
     }
     if (projectKnowledgeLinks && typeof projectKnowledgeLinks === 'object') {
-      await app.store.set('projectKnowledgeLinks', cleanKnowledgeLinks(projectKnowledgeLinks));
+      await set('projectKnowledgeLinks', cleanKnowledgeLinks(projectKnowledgeLinks));
     }
-    if (Array.isArray(todos)) await app.store.set('todos', cleanTodos(todos));
-    if (projectTags && typeof projectTags === 'object') await app.store.set('projectTags', cleanProjectTags(projectTags));
-    if (remoteWorkspaces) await app.store.set('remoteWorkspaces', normalizeRemoteWorkspaces(remoteWorkspaces));
-    await syncPrefsToMcp({ projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags });
+    if (Array.isArray(todos)) await set('todos', cleanTodos(todos));
+    if (projectTags && typeof projectTags === 'object') await set('projectTags', cleanProjectTags(projectTags));
+    if (projectContexts) await set('projectContexts', normalizeContexts(projectContexts));
+    if (remoteWorkspaces) await set('remoteWorkspaces', normalizeRemoteWorkspaces(remoteWorkspaces));
+    await syncPrefsToMcp({ projectColors, projectRatings, projectKnowledgeLinks, todos, projectTags, projectContexts });
     return true;
   },
 
@@ -509,25 +503,30 @@ export const api = {
     const totalWorkspaces = (found.length ? 1 : 0) + remoteWorkspaces.length;
     app.push('scan-start', { total: found.length, workspaces: totalWorkspaces });
 
-    const projects = [];
-    for (let i = 0; i < found.length; i++) {
-      try {
-        projects.push(await scanProject(found[i]));
-      } catch (e) {
-        // A repo we can't read shouldn't kill the whole scan.
+    const localResults = new Array(found.length);
+    let next = 0;
+    let done = 0;
+    const localScan = Promise.all(Array.from({ length: Math.min(4, found.length) }, async () => {
+      while (next < found.length) {
+        const index = next++;
+        try { localResults[index] = await scanProject(found[index]); } catch {}
+        app.push('scan-progress', { done: ++done, total: found.length });
       }
-      app.push('scan-progress', { done: i + 1, total: found.length });
-    }
-    const remoteResults = await Promise.all(remoteWorkspaces.map(async (workspace, index) => {
+    }));
+    // Scan SSH concurrently so a slow VM doesn't delay the start of local work.
+    const remoteScan = Promise.all(remoteWorkspaces.map(async (workspace, index) => {
       const result = await scanRemoteWorkspace(workspace);
       app.push('scan-remote-progress', { workspaceId: workspace.id, done: index + 1, total: remoteWorkspaces.length, state: result.connectionState });
       return result;
     }));
+    const [, remoteResults] = await Promise.all([localScan, remoteScan]);
+    const projects = localResults.filter(Boolean);
     for (const result of remoteResults) projects.push(...result.projects);
+    scannedProjects = projects;
     if (mcpInfo.state === 'running') {
       try { await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify(projects) }); } catch {}
     }
-    return { root, projects, remoteWorkspaces: remoteResults };
+    return { root, projects, remoteWorkspaces: remoteResults, limits: { depth, maxRepositories: 400 } };
   },
 
   async testRemoteWorkspace({ workspace }) {
@@ -536,12 +535,13 @@ export const api = {
     return scanRemoteWorkspace(normalized);
   },
 
-  async openRemoteTerminal({ alias, path }, app) {
+  async openRemoteTerminal({ alias, user = '', identityFile = '', path }, app) {
     const workspaces = normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces'));
-    const workspace = workspaces.find((item) => item.alias === alias && path.startsWith(item.path + '/'));
-    if (!workspace) return false;
+    const workspace = workspaces.find((item) => item.alias === alias && item.user === user && path.startsWith(item.path + '/'))
+      || workspaceFromProjectTarget(user ? `${user}@${alias}` : alias, path, { identityFile });
     const remotePath = path.replace(/\/$/, '');
-    const command = `ssh -o BatchMode=yes ${shellQuote(alias)} -t "cd -- ${shellQuote(remotePath)} && exec \$SHELL"`;
+    const args = ['ssh', '-i', resolveIdentityFile(sshIdentityFile(workspace)), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1', sshTarget(workspace), '-t', `cd -- ${shellQuote(remotePath)} && exec \$SHELL`];
+    const command = args.map((value) => shellQuote(value)).join(' ');
     const appleScript = `tell application "Terminal" to do script ${JSON.stringify(command)}`;
     return (await run(['osascript', '-e', appleScript])).code === 0;
   },
@@ -565,7 +565,7 @@ export const api = {
     try {
       const migration = await mcpMigration(app);
       mcpProcess = tjs.spawn([node, MCP_SERVER_PATH], {
-        cwd: tjs.cwd,
+        cwd: APP_ROOT,
         stdout: 'pipe',
         stderr: 'ignore',
         env: { PROJECTSHELF_PORT: '0', PROJECTSHELF_STATE_PATH: MCP_STATE_PATH, PROJECTSHELF_MIGRATION: JSON.stringify(migration) },
@@ -573,7 +573,8 @@ export const api = {
       const ready = await waitForMcpReady(mcpProcess);
       mcpInfo = { state: 'running', endpoint: ready.endpoint, port: ready.port, token: '', error: '' };
       await refreshMcpInfo();
-      try { await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify([]) }); } catch {}
+      await syncPrefsToMcp(await mcpMigration(app));
+      await mcpFetch('/app/scan-projects', { method: 'POST', body: JSON.stringify(scannedProjects) });
       return mcpInfo;
     } catch (error) {
       try { mcpProcess?.kill?.(); } catch {}
@@ -601,11 +602,10 @@ export const api = {
     if (mcpInfo.state !== 'running') return false;
     const result = await mcpFetch('/app/state');
     const metadata = result.metadata || {};
-    if (metadata.projectColors) await app.store.set('projectColors', metadata.projectColors);
-    if (metadata.projectRatings) await app.store.set('projectRatings', metadata.projectRatings);
-    if (metadata.projectKnowledgeLinks) await app.store.set('projectKnowledgeLinks', metadata.projectKnowledgeLinks);
-    if (metadata.projectTags) await app.store.set('projectTags', metadata.projectTags);
-    if (Array.isArray(metadata.todos)) await app.store.set('todos', cleanTodos(metadata.todos));
+    // A pull must not post its snapshot back: an LLM may have written since GET.
+    for (const key of ['projectColors', 'projectRatings', 'projectKnowledgeLinks', 'projectTags', 'projectContexts', 'todos']) {
+      if (metadata[key] !== undefined) await persistPreference(app.store, key, metadata[key]);
+    }
     return true;
   },
 
@@ -617,7 +617,7 @@ export const api = {
       ...mcpInfo,
       url,
       config: `[mcp_servers.projectShelf]\nurl = "${url}"\nhttp_headers = { Authorization = "Bearer ${token}" }`,
-      prompt: `Connect Codex to ProjectShelf by adding the generated block to ~/.codex/config.toml. The MCP endpoint is ${url} and authentication is the Authorization bearer token shown above. Use list_projects before update_project. You may change only project colors, ratings, tags, Notion links, Obsidian links, and Todo items. Never edit files, run shell commands, perform Git operations, or delete repositories.`,
+      prompt: `Connect Codex to ProjectShelf by adding the generated block to ~/.codex/config.toml. The MCP endpoint is ${url} and authentication is the Authorization bearer token shown above. Use list_projects before update_project. Read metadata.context (goal, checkpoint, nextAction, blocker) before resuming a project. After work, update checkpoint and nextAction only when authorized. You may change only project metadata, resume context, and Todo items. Never edit files, run shell commands, perform Git operations, or delete repositories through this MCP.`,
     };
   },
 
@@ -627,16 +627,50 @@ export const api = {
     if (kind === 'code') {
       const r = await run(['code', path]);
       // `code` isn't on PATH unless the shell command was installed.
-      if (r.code !== 0) await run(['open', '-a', 'Visual Studio Code', path]);
-      return true;
+      return r.code === 0 || (await run(['open', '-a', 'Visual Studio Code', path])).code === 0;
     }
+    if (kind === 'xcode' || kind === 'codex') return (await run(['open', '-a', kind === 'xcode' ? 'Xcode' : 'Codex', path])).code === 0;
     return false;
   },
 
-  async repoStatus({ path }) {
+  async resumeProject({ path }, app) {
+    const project = scannedProjects.find((item) => item.path === path);
+    if (!project) throw new Error('Project is not present in the latest scan.');
+    const prefs = await api.loadPrefs({}, app);
+    const context = normalizeContext(prefs.projectContexts[path]);
+    const opened = project.location === 'remote'
+      ? await api.openRemoteTerminal({ alias: project.sshAlias, user: project.sshUser, identityFile: project.sshIdentityFile, path: project.remotePath }, app)
+      : await api.openIn({ path, kind: context.environment });
+    if (!opened) throw new Error('Unable to open the selected application. Check that it is installed.');
+    if (context.openTerminal && context.environment !== 'terminal' && project.location !== 'remote') await api.openIn({ path, kind: 'terminal' });
+    if (context.openReferences) for (const url of Object.values(prefs.projectKnowledgeLinks[path] || {})) await api.openUrl({ url });
+    context.lastOpened = Date.now();
+    await api.savePrefs({ projectContexts: { ...prefs.projectContexts, [path]: context } }, app);
+    return context;
+  },
+
+  async exportBackup({ path }, app) {
+    if (!path || !path.endsWith('.json')) throw new Error('Select a JSON file.');
+    const prefs = await api.loadPrefs({}, app);
+    const preferences = Object.fromEntries(BACKUP_KEYS.map((key) => [key, prefs[key]]));
+    await tjs.writeFile(path, new TextEncoder().encode(JSON.stringify({ format: 'projectshelf-backup', version: 1, exportedAt: new Date().toISOString(), preferences }, null, 2)));
+    return true;
+  },
+
+  async importBackup({ path }, app) {
+    const incoming = parseBackup(dec.decode(await tjs.readFile(path)));
+    const current = await api.loadPrefs({}, app);
+    await persistPreference(app.store, 'backupBeforeImport', current);
+    await api.savePrefs(mergeBackup(current, incoming), app);
+    return api.loadPrefs({}, app);
+  },
+
+  async repoStatus({ path }, app) {
     const remote = parseRemoteProjectKey(path);
     if (remote) {
-      const result = await runRemote(remoteGitArgs(remote.alias, `git -C ${shellQuote(remote.path)} status --short --branch`), 60000);
+      const workspaces = normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces'));
+      const workspace = workspaces.find((item) => sshTarget(item) === remote.alias) || workspaceFromProjectTarget(remote.alias, remote.path);
+      const result = await runRemote(remoteGitArgs(workspace, `git -C ${shellQuote(remote.path)} status --short --branch`), 60000);
       if (result.code !== 0 || result.timedOut) return { error: classifyRemoteFailure(result).errorMessage };
       const parsed = parseGitStatus(result.out);
       return {
@@ -675,13 +709,15 @@ export const api = {
     };
   },
 
-  async repoDiff({ path, file }) {
+  async repoDiff({ path, file }, app) {
     if (!path || !file) return { diff: '', available: false };
     const remote = parseRemoteProjectKey(path);
     if (remote) {
       if (file.includes('\0') || file.includes('..')) return { diff: '', available: false };
       const command = `git -C ${shellQuote(remote.path)} diff --no-ext-diff -- ${shellQuote(file)}`;
-      const result = await runRemote(remoteGitArgs(remote.alias, command), 60000);
+      const workspaces = normalizeRemoteWorkspaces(await app.store.get('remoteWorkspaces'));
+      const workspace = workspaces.find((item) => sshTarget(item) === remote.alias) || workspaceFromProjectTarget(remote.alias, remote.path);
+      const result = await runRemote(remoteGitArgs(workspace, command), 60000);
       return { file, diff: result.out, available: Boolean(result.out), error: result.code === 0 ? '' : classifyRemoteFailure(result).errorMessage };
     }
     const [unstaged, staged] = await Promise.all([
@@ -715,3 +751,9 @@ export function init(app) {
 export function onMenu(id, app) {
   app.push('menu', id);
 }
+
+export function onWindowClosed() { return api.mcpStop(); }
+
+// Pure adapters and bounded process helper are exported for regression tests,
+// not exposed to the frontend or to MCP tools.
+export { runRemote, scanProject, decorateRemoteProject };

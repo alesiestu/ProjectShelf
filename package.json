@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs mcp/test.mjs",
     "mcp": "node mcp/server.mjs",
     "test:mcp": "node --test mcp/test.mjs"
   },

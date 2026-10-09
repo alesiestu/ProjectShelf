@@ -7,6 +7,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import { getStorePath, loadStore, updateStore, rotateToken } from './store.mjs';
 import { MAX_RATING, PROJECT_COLORS, normalizeProjectMetadata, normalizeTodo, validateProjectPath } from './validation.mjs';
+import { normalizeContext } from '../src/project-context.js';
 
 const PORT = Number(process.env.PROJECTSHELF_PORT || 0);
 const STATE_PATH = process.env.PROJECTSHELF_STATE_PATH || getStorePath(homedir());
@@ -41,6 +42,7 @@ function metadataFor(path) {
     tags: document.projectTags[path] || [],
     notion: links.notion || null,
     obsidian: links.obsidian || null,
+    context: normalizeContext(document.projectContexts[path]),
     todoIds: document.todos.filter((todo) => todo.projectPaths.includes(path)).map((todo) => todo.id),
   };
 }
@@ -66,7 +68,7 @@ function buildMcp() {
   });
   server.registerTool('update_project', {
     title: 'Update ProjectShelf project metadata',
-    description: 'Update color, rating, tags, Notion link, or Obsidian link for an existing scanned project.',
+    description: 'Update metadata and resume context for an existing scanned project. Context fields are merged; lastOpened is app-managed.',
     inputSchema: {
       path: z.string(),
       color: z.enum(PROJECT_COLORS).nullable().optional(),
@@ -74,6 +76,12 @@ function buildMcp() {
       tags: z.array(z.string()).max(12).optional(),
       notion: z.string().nullable().optional(),
       obsidian: z.string().nullable().optional(),
+      context: z.object({
+        goal: z.string().max(4000).optional(), checkpoint: z.string().max(4000).optional(),
+        nextAction: z.string().max(4000).optional(), blocker: z.string().max(4000).optional(),
+        environment: z.enum(['code', 'xcode', 'codex', 'terminal']).optional(),
+        favorite: z.boolean().optional(), openTerminal: z.boolean().optional(), openReferences: z.boolean().optional(),
+      }).optional(),
     },
     outputSchema: { path: z.string(), metadata: z.record(z.string(), z.any()) },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
@@ -82,6 +90,7 @@ function buildMcp() {
     const normalized = normalizeProjectMetadata(input);
     document = await updateStore(STATE_PATH, (current) => {
       const next = structuredClone(current);
+      if (input.context) next.projectContexts[path] = normalizeContext({ ...next.projectContexts[path], ...input.context });
       if ('color' in normalized) normalized.color ? next.projectColors[path] = normalized.color : delete next.projectColors[path];
       if ('rating' in normalized) normalized.rating ? next.projectRatings[path] = normalized.rating : delete next.projectRatings[path];
       if ('tags' in normalized) normalized.tags.length ? next.projectTags[path] = normalized.tags : delete next.projectTags[path];

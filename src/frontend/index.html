@@ -14,9 +14,16 @@
   <button id="language" class="language" aria-label="Change language">IT</button>
   <button id="workspaceOpen" class="workspace-button">Workspace</button>
   <button id="mcpOpen" class="mcp-button">MCP</button>
+  <details class="backup-menu"><summary id="backupLabel">Backup</summary><div><button id="exportBackup">Export metadata</button><button id="importBackup">Import metadata</button></div></details>
   <button id="pick">Choose Workspace…</button>
   <button id="rescan" class="primary">Rescan</button>
 </header>
+
+<section class="work-toolbar">
+  <nav id="views" aria-label="Views"></nav>
+  <input id="search" type="search" autocomplete="off" aria-label="Search projects" placeholder="Search name, path, tag, stack…">
+</section>
+<div id="feedback" class="feedback" role="status" hidden><span id="feedbackText"></span><button id="saveRetry" hidden>Retry</button></div>
 
 <section class="stats" id="stats"></section>
 
@@ -36,12 +43,31 @@
 
 <main class="board" id="board"></main>
 
-<dialog id="notionDialog" class="notion-dialog">
+<dialog id="contextDialog" class="notion-dialog context-dialog" aria-labelledby="contextTitle">
+  <form id="contextForm">
+    <div class="git-dialog-head"><h2 id="contextTitle"></h2><button type="button" id="contextClose" aria-label="Close">×</button></div>
+    <p id="contextPath" class="context-path"></p>
+    <label for="goal" id="goalLabel"></label><textarea id="goal" rows="2" maxlength="4000"></textarea>
+    <label for="checkpoint" id="checkpointLabel"></label><textarea id="checkpoint" rows="2" maxlength="4000"></textarea>
+    <label for="nextAction" id="nextActionLabel"></label><textarea id="nextAction" rows="2" maxlength="4000"></textarea>
+    <label for="blocker" id="blockerLabel"></label><textarea id="blocker" rows="2" maxlength="4000"></textarea>
+    <label for="environment" id="environmentLabel"></label>
+    <select id="environment"><option value="code">VS Code</option><option value="xcode">Xcode</option><option value="codex">Codex</option><option value="terminal">Terminal</option></select>
+    <p id="remoteResumeHint" class="context-path" hidden></p>
+    <label class="context-check"><input id="openTerminal" type="checkbox"><span id="openTerminalLabel"></span></label>
+    <label class="context-check"><input id="openReferences" type="checkbox"><span id="openReferencesLabel"></span></label>
+    <div class="dialog-feedback" role="alert"></div>
+    <div class="dialog-actions"><button type="button" id="contextCancel">Cancel</button><button type="submit" id="contextSave" class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="notionDialog" class="notion-dialog" aria-labelledby="notionTitle">
   <form method="dialog" id="notionForm">
     <h2 id="notionTitle">Notion</h2>
     <label for="notionUrl" id="notionLabel">Notion page URL</label>
     <input id="notionUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://www.notion.so/…">
     <p id="notionError" class="notion-error" role="alert"></p>
+    <div class="dialog-feedback" role="alert"></div>
     <div class="dialog-actions">
       <button type="button" id="notionRemove" class="danger">Remove</button>
       <span class="dialog-spacer"></span>
@@ -51,7 +77,7 @@
   </form>
 </dialog>
 
-<dialog id="todoDialog" class="notion-dialog todo-dialog">
+<dialog id="todoDialog" class="notion-dialog todo-dialog" aria-labelledby="todoDialogTitle">
   <form method="dialog" id="todoForm">
     <h2 id="todoDialogTitle">Add todo</h2>
     <label for="todoText" id="todoTextLabel">Task</label>
@@ -59,6 +85,7 @@
     <label id="todoProjectsLabel">Projects</label>
     <div id="todoProjects" class="todo-projects"></div>
     <p id="todoError" class="notion-error" role="alert"></p>
+    <div class="dialog-feedback" role="alert"></div>
     <div class="dialog-actions">
       <button type="button" id="todoCancel">Cancel</button>
       <button type="submit" id="todoSave" class="primary">Save</button>
@@ -66,7 +93,7 @@
   </form>
 </dialog>
 
-<dialog id="gitDialog" class="notion-dialog git-dialog">
+<dialog id="gitDialog" class="notion-dialog git-dialog" aria-labelledby="gitTitle">
   <div class="git-dialog-body">
     <div class="git-dialog-head">
       <h2 id="gitTitle">Git status</h2>
@@ -82,7 +109,7 @@
   </div>
 </dialog>
 
-<dialog id="mcpDialog" class="notion-dialog mcp-dialog">
+<dialog id="mcpDialog" class="notion-dialog mcp-dialog" aria-labelledby="mcpTitle">
   <form method="dialog" id="mcpForm">
     <div class="git-dialog-head"><h2 id="mcpTitle">MCP locale</h2><button type="button" id="mcpClose">×</button></div>
     <p id="mcpDescription" class="mcp-description"></p>
@@ -107,18 +134,23 @@
   </form>
 </dialog>
 
-<dialog id="workspaceDialog" class="notion-dialog workspace-dialog">
+<dialog id="workspaceDialog" class="notion-dialog workspace-dialog" aria-labelledby="workspaceTitle">
   <form method="dialog" id="workspaceForm">
     <div class="git-dialog-head"><h2 id="workspaceTitle">Remote workspaces</h2><button type="button" id="workspaceClose">×</button></div>
     <div id="workspaceList" class="workspace-list"></div>
     <div class="workspace-form-head"><b id="workspaceFormTitle">Add workspace</b><button type="button" id="workspaceNew">+</button></div>
-    <label id="workspaceAliasLabel" for="workspaceAlias">SSH alias</label>
-    <input id="workspaceAlias" autocomplete="off" spellcheck="false" placeholder="dev-vm">
+    <label id="workspaceAliasLabel" for="workspaceAlias">SSH alias / host</label>
+    <input id="workspaceAlias" autocomplete="off" spellcheck="false" placeholder="dev-vm or 192.168.1.20">
+    <label id="workspaceUserLabel" for="workspaceUser">SSH user</label>
+    <input id="workspaceUser" autocomplete="off" spellcheck="false" placeholder="alessandro">
+    <label id="workspaceKeyLabel" for="workspaceKey">SSH private key</label>
+    <input id="workspaceKey" autocomplete="off" spellcheck="false" value="~/.ssh/id_rsa" placeholder="~/.ssh/id_rsa">
     <label id="workspacePathLabel" for="workspacePath">Remote path</label>
     <input id="workspacePath" autocomplete="off" spellcheck="false" placeholder="/home/user/workspace">
     <label id="workspaceNameLabel" for="workspaceName">Display name</label>
     <input id="workspaceName" autocomplete="off" maxlength="80" placeholder="Dev VM">
     <p id="workspaceError" class="notion-error" role="alert"></p>
+    <div class="dialog-feedback" role="alert"></div>
     <div class="dialog-actions">
       <button type="button" id="workspaceRemove" class="danger">Remove</button>
       <button type="button" id="workspaceTest">Test connection</button>

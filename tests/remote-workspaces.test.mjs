@@ -12,9 +12,15 @@ import {
 
 test('normalizes a remote workspace and creates a stable id', () => {
   assert.deepEqual(normalizeRemoteWorkspace({ alias: 'dev-vm', path: '/home/alessandro/workspace', name: 'Dev VM' }), {
-    id: 'remote-dev-vm-home-alessandro-workspace', alias: 'dev-vm', path: '/home/alessandro/workspace', name: 'Dev VM', enabled: true,
+    id: 'remote-dev-vm-home-alessandro-workspace', alias: 'dev-vm', host: 'dev-vm', user: '', identityFile: '~/.ssh/id_rsa', path: '/home/alessandro/workspace', name: 'Dev VM', enabled: true,
   });
   assert.equal(remoteProjectKey('dev-vm', '/home/alessandro/workspace/app'), 'ssh://dev-vm/home/alessandro/workspace/app');
+});
+
+test('supports an IP, SSH user, and custom private key', () => {
+  const workspace = normalizeRemoteWorkspace({ host: '192.168.1.20', user: 'alessandro', identityFile: '~/.ssh/work-vm', path: '/srv/projects' });
+  assert.equal(workspace.id, 'remote-alessandro@192.168.1.20-srv-projects');
+  assert.equal(remoteProjectKey(workspace, '/srv/projects/app'), 'ssh://alessandro@192.168.1.20/srv/projects/app');
 });
 
 test('rejects unsafe aliases and non-absolute paths', () => {
@@ -30,7 +36,7 @@ test('normalizes duplicate workspaces and preserves disabled entries', () => {
     { alias: 'dev-vm', path: '/tmp', name: 'duplicate' },
     { alias: 'bad alias', path: '/tmp' },
   ]);
-  assert.deepEqual(result, [{ id: 'remote-dev-vm-tmp', alias: 'dev-vm', path: '/tmp', name: 'dev-vm:/tmp', enabled: false }]);
+  assert.deepEqual(result, [{ id: 'remote-dev-vm-tmp', alias: 'dev-vm', host: 'dev-vm', user: '', identityFile: '~/.ssh/id_rsa', path: '/tmp', name: 'dev-vm:/tmp', enabled: false }]);
 });
 
 test('quotes shell values without allowing a quote to escape', () => {

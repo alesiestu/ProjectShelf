@@ -3,7 +3,7 @@
   "title": "ProjectShelf",
   "size": "1180x820",
   "id": "it.iannacone.projectshelf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minTinyjsVersion": "0.42.0",
   "openFolders": true
 }

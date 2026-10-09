@@ -1,3 +1,4 @@
+import { normalizeContexts } from '../src/project-context.js';
 export const PROJECT_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'purple'];
 export const MAX_RATING = 5;
 export const MAX_TAGS = 12;
@@ -92,6 +93,7 @@ export function normalizeMetadataDocument(input = {}) {
     projectRatings: {},
     projectKnowledgeLinks: {},
     projectTags: {},
+    projectContexts: normalizeContexts(input.projectContexts),
     todos: [],
     token: typeof input.token === 'string' && input.token ? input.token : undefined,
   };
